@@ -7,7 +7,7 @@ pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
     let mut rl = DefaultEditor::new()?;
 
     loop {
-        let readline = rl.readline("buku > ");
+        let readline = rl.readline("buku (? for help) ");
         match readline {
             Ok(line) => {
                 let line = line.trim();
