@@ -1,0 +1,29 @@
+[package]
+name = "buku"
+version = "0.1.0"
+edition = "2021"
+authors = ["Arun Prakash Jana <engineerarun@gmail.com>"]
+description = "Bookmark manager like a text-based mini-web."
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+rusqlite = { version = "0.30", features = ["bundled"] }
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+scraper = "0.18"
+rpassword = "7.0"
+directories = "5.0"
+chrono = "0.4"
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.10"
+regex = "1.10"
+open = "5.0"
+rustyline = "13.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
