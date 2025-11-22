@@ -6,6 +6,8 @@ mod interactive;
 mod import_export;
 mod browser;
 mod cli;
+mod operations;
+mod models;
 
 use clap::Parser;
 

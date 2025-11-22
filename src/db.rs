@@ -1,5 +1,6 @@
 use rusqlite::{Connection, Result};
 use std::path::Path;
+use crate::models::Bookmark;
 
 pub struct BukuDb {
     conn: Connection,
@@ -43,12 +44,13 @@ impl BukuDb {
         }
     }
 
-    pub fn get_rec_by_id(&self, id: usize) -> Result<Option<(String, String, String, String)>> {
+    pub fn get_rec_by_id(&self, id: usize) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn.prepare("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
         let mut rows = stmt.query([id])?;
 
         if let Some(row) = rows.next()? {
-            Ok(Some((
+            Ok(Some(Bookmark::new(
+                id,
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
@@ -59,10 +61,10 @@ impl BukuDb {
         }
     }
 
-    pub fn get_rec_all(&self) -> Result<Vec<(usize, String, String, String, String)>> {
+    pub fn get_rec_all(&self) -> Result<Vec<Bookmark>> {
         let mut stmt = self.conn.prepare("SELECT id, URL, metadata, tags, desc FROM bookmarks")?;
         let rows = stmt.query_map([], |row| {
-            Ok((
+            Ok(Bookmark::new(
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
@@ -132,7 +134,7 @@ impl BukuDb {
         Ok(())
     }
 
-    pub fn search(&self, keywords: &[String], any: bool, deep: bool, regex: bool) -> Result<Vec<(usize, String, String, String, String)>> {
+    pub fn search(&self, keywords: &[String], any: bool, deep: bool, regex: bool) -> Result<Vec<Bookmark>> {
         let mut query = "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE ".to_string();
         let mut params: Vec<String> = Vec::new();
         let mut conditions = Vec::new();
@@ -147,8 +149,8 @@ impl BukuDb {
              let all_recs = self.get_rec_all()?;
              let re = regex::Regex::new(&keywords[0]).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
              
-             let filtered = all_recs.into_iter().filter(|(_, url, title, tags, desc)| {
-                 re.is_match(url) || re.is_match(title) || re.is_match(tags) || re.is_match(desc)
+             let filtered = all_recs.into_iter().filter(|b| {
+                 re.is_match(&b.url) || re.is_match(&b.title) || re.is_match(&b.tags) || re.is_match(&b.description)
              }).collect();
              return Ok(filtered);
         }
@@ -184,7 +186,7 @@ impl BukuDb {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
         
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok((
+            Ok(Bookmark::new(
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
@@ -200,7 +202,7 @@ impl BukuDb {
         Ok(records)
     }
 
-    pub fn search_tags(&self, tags: &[String]) -> Result<Vec<(usize, String, String, String, String)>> {
+    pub fn search_tags(&self, tags: &[String]) -> Result<Vec<Bookmark>> {
         let mut query = "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE ".to_string();
         let mut params: Vec<String> = Vec::new();
         let mut conditions = Vec::new();
@@ -221,7 +223,7 @@ impl BukuDb {
         let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
         
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok((
+            Ok(Bookmark::new(
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,

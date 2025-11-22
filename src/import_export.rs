@@ -1,4 +1,5 @@
 use crate::db::BukuDb;
+use crate::models::Bookmark;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -18,21 +19,28 @@ pub fn export_bookmarks(db: &BukuDb, file_path: &str) -> Result<(), Box<dyn Erro
     }
 }
 
-fn export_html(records: &[(usize, String, String, String, String)], path: &Path) -> Result<(), Box<dyn Error>> {
+fn export_html(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
     writeln!(file, "<!DOCTYPE NETSCAPE-Bookmark-file-1>")?;
     writeln!(file, "<!-- This is an automatically generated file.")?;
     writeln!(file, "     It will be read and overwritten.")?;
     writeln!(file, "     DO NOT EDIT! -->")?;
-    writeln!(file, "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">")?;
+    writeln!(
+        file,
+        "<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">"
+    )?;
     writeln!(file, "<TITLE>Bookmarks</TITLE>")?;
     writeln!(file, "<H1>Bookmarks</H1>")?;
     writeln!(file, "<DL><p>")?;
 
-    for (_, url, title, tags, desc) in records {
-        writeln!(file, "    <DT><A HREF=\"{}\" TAGS=\"{}\" ADD_DATE=\"0\">{}</A>", url, tags, title)?;
-        if !desc.is_empty() {
-            writeln!(file, "    <DD>{}", desc)?;
+    for bookmark in records {
+        writeln!(
+            file,
+            "    <DT><A HREF=\"{}\" TAGS=\"{}\" ADD_DATE=\"0\">{}</A>",
+            bookmark.url, bookmark.tags, bookmark.title
+        )?;
+        if !bookmark.description.is_empty() {
+            writeln!(file, "    <DD>{}", bookmark.description)?;
         }
     }
 
@@ -40,24 +48,24 @@ fn export_html(records: &[(usize, String, String, String, String)], path: &Path)
     Ok(())
 }
 
-fn export_md(records: &[(usize, String, String, String, String)], path: &Path) -> Result<(), Box<dyn Error>> {
+fn export_md(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
-    for (_, url, title, tags, _) in records {
-        writeln!(file, "[{}]({}) <!-- {} -->", title, url, tags)?;
+    for bookmark in records {
+        writeln!(file, "[{}]({}) <!-- {} -->", bookmark.title, bookmark.url, bookmark.tags)?;
     }
     Ok(())
 }
 
-fn export_org(records: &[(usize, String, String, String, String)], path: &Path) -> Result<(), Box<dyn Error>> {
+fn export_org(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
-    for (_, url, title, tags, _) in records {
+    for bookmark in records {
         // Format: * [[url][title]] :tags:
-        let org_tags = if tags.is_empty() {
+        let org_tags = if bookmark.tags.is_empty() {
             "".to_string()
         } else {
-            format!(" :{}", tags.replace(",", ":"))
+            format!(" :{}", bookmark.tags.replace(",", ":"))
         };
-        writeln!(file, "* [[{}][{}]] {}:", url, title, org_tags)?;
+        writeln!(file, "* [[{}][{}]] {}:", bookmark.url, bookmark.title, org_tags)?;
     }
     Ok(())
 }

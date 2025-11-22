@@ -1,7 +1,7 @@
-use clap::Parser;
-use std::path::PathBuf;
 use crate::db::BukuDb;
-use crate::{crypto, fetch, import_export, browser, interactive};
+use crate::{browser, crypto, fetch, import_export, interactive, operations};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, disable_version_flag = true)]
@@ -10,436 +10,487 @@ pub struct Cli {
     #[arg(short = 'v', long = "version")]
     pub version: bool,
 
-    /// Search keywords
-    #[arg(name = "KEYWORD")]
-    pub keywords: Vec<String>,
-
     /// Optional custom database file path
     #[arg(long)]
     pub db: Option<PathBuf>,
-
-    /// Bookmark URL with comma-separated tags
-    #[arg(short, long, value_names = &["URL", "tags"])]
-    pub add: Option<Vec<String>>,
-
-    /// Update fields of an existing bookmark
-    #[arg(short, long, num_args = 0..=1)]
-    pub update: Option<Vec<String>>,
-
-    /// Edit and add a new bookmark in editor
-    #[arg(short, long, num_args = 0..=1)]
-    pub write: Option<Vec<String>>,
-
-    /// Remove bookmarks from DB
-    #[arg(short, long, num_args = 0..=1)]
-    pub delete: Option<Vec<String>>,
-
-    /// Prevents reordering after deleting a bookmark
-    #[arg(long)]
-    pub retain_order: bool,
-
-    /// Bookmark link (for edit)
-    #[arg(long)]
-    pub url: Option<String>,
-
-    /// Comma-separated tags (for edit)
-    #[arg(long, num_args = 0..=1)]
-    pub tag: Option<Vec<String>>,
-
-    /// Bookmark title (for edit)
-    #[arg(long, num_args = 0..=1)]
-    pub title: Option<Vec<String>>,
-
-    /// Notes or description of the bookmark
-    #[arg(short, long, num_args = 0..=1)]
-    pub comment: Option<Vec<String>>,
-
-    /// Disable web-fetch during auto-refresh
-    #[arg(long)]
-    pub immutable: Option<u8>,
-
-    /// Swap two records at specified indices
-    #[arg(long, num_args = 2)]
-    pub swap: Option<Vec<usize>>,
-
-    /// Find records with ANY matching keyword
-    #[arg(short = 's', long = "sany")]
-    pub sany: Option<Vec<String>>,
-
-    /// Find records matching ALL the keywords
-    #[arg(short = 'S', long = "sall")]
-    pub sall: Option<Vec<String>>,
-
-    /// Match substrings
-    #[arg(long)]
-    pub deep: bool,
-
-    /// Search for keywords in specific fields
-    #[arg(long)]
-    pub markers: bool,
-
-    /// Run a regex search
-    #[arg(short = 'r', long = "sreg")]
-    pub sreg: Option<String>,
-
-    /// Search bookmarks by tags
-    #[arg(short = 't', long = "stag", num_args = 0..)]
-    pub stag: Option<Vec<String>>,
-
-    /// Omit records matching specified keywords
-    #[arg(short = 'x', long = "exclude")]
-    pub exclude: Option<Vec<String>>,
-
-    /// Output random bookmarks out of the selection
-    #[arg(long)]
-    pub random: Option<usize>,
-
-    /// Comma-separated list of fields to order the output by
-    #[arg(long)]
-    pub order: Option<Vec<String>>,
-
-    /// Encrypt DB in N iterations
-    #[arg(short = 'l', long = "lock")]
-    pub lock: Option<u32>,
-
-    /// Decrypt DB in N iterations
-    #[arg(short = 'k', long = "unlock")]
-    pub unlock: Option<u32>,
-
-    /// Auto-import bookmarks from web browsers
-    #[arg(long)]
-    pub ai: bool,
-
-    /// Export bookmarks
-    #[arg(short, long)]
-    pub export: Option<String>,
-
-    /// Import bookmarks from file
-    #[arg(short, long)]
-    pub import: Option<String>,
-
-    /// Show record details by indices, ranges
-    #[arg(short, long, num_args = 0..)]
-    pub print: Option<Vec<String>>,
-
-    /// Limit fields in -p or JSON search output
-    #[arg(short, long)]
-    pub format: Option<u8>,
-
-    /// JSON formatted output
-    #[arg(short, long, num_args = 0..=1)]
-    pub json: Option<Vec<String>>,
-
-    /// Set output colors
-    #[arg(long)]
-    pub colors: Option<String>,
 
     /// Disable color output
     #[arg(long)]
     pub nc: bool,
 
-    /// Show N results per page
-    #[arg(short = 'n', long)]
-    pub count: Option<usize>,
-
-    /// Do not show the subprompt, run and exit
-    #[arg(long)]
-    pub np: bool,
-
-    /// Browse bookmarks by indices and ranges
-    #[arg(short, long, num_args = 0..)]
-    pub open: Option<Vec<String>>,
-
-    /// Browse all search results immediately
-    #[arg(long)]
-    pub oa: bool,
-
-    /// If scheme is missing from uri, assume S
-    #[arg(long)]
-    pub default_scheme: Option<String>,
-
-    /// Replace old tag with new tag everywhere
-    #[arg(long, num_args = 1..=2)]
-    pub replace: Option<Vec<String>>,
-
-    /// When fetching an URL, use the resulting URL from following redirects
-    #[arg(long)]
-    pub url_redirect: bool,
-
-    /// Add a tag in specified pattern on redirect
-    #[arg(long, num_args = 0..=1)]
-    pub tag_redirect: Option<Vec<String>>,
-
-    /// Add a tag in specified pattern on error
-    #[arg(long, num_args = 0..=1)]
-    pub tag_error: Option<Vec<String>>,
-
-    /// Delete/do not add on error
-    #[arg(long)]
-    pub del_error: Option<Vec<String>>,
-
-    /// Export records affected by the above options
-    #[arg(long)]
-    pub export_on: bool,
-
-    /// Update DB indices to match specified order
-    #[arg(long)]
-    pub reorder: Option<Vec<String>>,
-
-    /// Browse a cached page from Wayback Machine
-    #[arg(long)]
-    pub cached: Option<String>,
-
-    /// Add a bookmark without connecting to web
-    #[arg(long)]
-    pub offline: bool,
-
-    /// Show similar tags when adding bookmarks
-    #[arg(long)]
-    pub suggest: bool,
-
-    /// Reduce verbosity
-    #[arg(long)]
-    pub tacit: bool,
-
-    /// Do not wait for input
-    #[arg(long)]
-    pub nostdin: bool,
-
-    /// Max network connections in full refresh
-    #[arg(long)]
-    pub threads: Option<usize>,
-
-    /// Check latest upstream version available
-    #[arg(short = 'V')]
-    pub upstream: bool,
-
     /// Show debug information
     #[arg(short = 'g', long = "debug")]
     pub debug: bool,
+
+    /// Search keywords (when no subcommand is provided)
+    #[arg(name = "KEYWORD")]
+    pub keywords: Vec<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
 }
 
-pub fn handle_args(cli: Cli, db: &BukuDb, db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    // Check if any command flag is present
-    let has_args = cli.add.is_some() || cli.update.is_some() || cli.delete.is_some() ||
-                   !cli.keywords.is_empty() || cli.sany.is_some() || cli.sall.is_some() ||
-                   cli.sreg.is_some() || cli.stag.is_some() || cli.print.is_some();
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Add a new bookmark
+    Add {
+        /// URL to bookmark
+        url: String,
 
-    if !has_args && !cli.np {
-        // Interactive mode
-        // First list all bookmarks (optional, but buku does it)
-        let records = db.get_rec_all()?;
-        for (id, url, title, tags, desc) in records {
-            println!("{}. {}\n   > {}\n   + {}\n   # {}", id, title, url, desc, tags);
-        }
-        interactive::run(&db)?;
-    } else if let Some(add_args) = cli.add {
-        // Handle add
-        let url = add_args.get(0).ok_or("Missing URL")?;
-        let mut tags = add_args.get(1..).unwrap_or(&[]).to_vec();
+        /// Comma-separated tags
+        #[arg(short, long)]
+        tag: Option<Vec<String>>,
 
-        // Merge with --tag flag
-        if let Some(extra_tags) = cli.tag {
-            tags.extend(extra_tags);
-        }
+        /// Bookmark title
+        #[arg(long)]
+        title: Option<String>,
 
-        println!("Fetching metadata for: {}", url);
-        let fetch_result = fetch::fetch_data(url).unwrap_or(fetch::FetchResult {
-            url: url.clone(),
-            title: "".to_string(),
-            desc: "".to_string(),
-            keywords: "".to_string(),
-        });
+        /// Notes or description
+        #[arg(short, long)]
+        comment: Option<String>,
 
-        let title = if let Some(t) = cli.title {
-            t.join(" ")
-        } else if !fetch_result.title.is_empty() {
-            fetch_result.title
-        } else {
-            url.clone()
-        };
+        /// Add without connecting to web
+        #[arg(long)]
+        offline: bool,
+    },
 
-        let desc = if let Some(d) = cli.comment {
-            d.join(" ")
-        } else {
-            fetch_result.desc
-        };
+    /// Update an existing bookmark
+    Update {
+        /// Bookmark index to update
+        id: usize,
 
-        let tags_str = if tags.is_empty() {
-            format!(",{},", fetch_result.keywords)
-        } else {
-            format!(",{},", tags.join(","))
-        };
+        /// New URL
+        #[arg(long)]
+        url: Option<String>,
 
-        let id = db.add_rec(&fetch_result.url, &title, &tags_str, &desc)?;
-        println!("Added bookmark at index {}", id);
-    } else if let Some(print_args) = cli.print {
-        // Handle print/list
-        let records = db.get_rec_all()?;
-        for (id, url, title, tags, desc) in records {
-            println!("{}. {}\n   > {}\n   + {}\n   # {}", id, title, url, desc, tags);
-        }
-    } else if let Some(update_args) = cli.update {
-        // Handle update
-        // If update_args is empty, it might be a full refresh or update last result?
-        // For now, assume index is provided if args are present.
-        // But update can take indices OR be used with search.
-        // This logic is complex in original buku.
-        // Let's implement basic update by index for now.
+        /// New tags (comma-separated)
+        #[arg(short, long)]
+        tag: Option<Vec<String>>,
 
-        if let Some(index_str) = update_args.get(0) {
-            if let Ok(id) = index_str.parse::<usize>() {
-                let url = cli.url.as_deref();
-                let title = cli.title.as_deref().map(|v| v.join(" "));
-                let tags = cli.tag.as_deref().map(|v| v.join(","));
-                let desc = cli.comment.as_deref().map(|v| v.join(" "));
-                let immutable = cli.immutable;
+        /// New title
+        #[arg(long)]
+        title: Option<String>,
 
-                db.update_rec(id, url, title.as_deref(), tags.as_deref(), desc.as_deref(), immutable)?;
-                println!("Updated bookmark at index {}", id);
-            } else {
-                println!("Invalid index: {}", index_str);
+        /// New description
+        #[arg(short, long)]
+        comment: Option<String>,
+
+        /// Disable web-fetch during auto-refresh
+        #[arg(long)]
+        immutable: Option<u8>,
+    },
+
+    /// Delete bookmark(s)
+    Delete {
+        /// Bookmark indices, ranges (e.g., 1-5), or * for all
+        #[arg(num_args = 0..)]
+        ids: Vec<String>,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+
+        /// Prevents reordering after deletion
+        #[arg(long)]
+        retain_order: bool,
+    },
+
+    /// Print/list bookmarks
+    Print {
+        /// Bookmark indices or ranges to print
+        #[arg(num_args = 0..)]
+        ids: Vec<String>,
+
+        /// Limit fields in output
+        #[arg(short, long)]
+        format: Option<u8>,
+
+        /// JSON formatted output
+        #[arg(short, long)]
+        json: bool,
+    },
+
+    /// Search bookmarks
+    Search {
+        /// Search keywords
+        keywords: Vec<String>,
+
+        /// Match ALL keywords (default: ANY)
+        #[arg(short = 'a', long)]
+        all: bool,
+
+        /// Match substrings
+        #[arg(long)]
+        deep: bool,
+
+        /// Regex search
+        #[arg(short, long)]
+        regex: bool,
+
+        /// Search for keywords in specific fields
+        #[arg(long)]
+        markers: bool,
+    },
+
+    /// Search bookmarks by tags
+    Tag {
+        /// Tag keywords to search
+        #[arg(num_args = 0..)]
+        tags: Vec<String>,
+    },
+
+    /// Encrypt database
+    Lock {
+        /// Number of hash iterations
+        #[arg(default_value = "8")]
+        iterations: u32,
+    },
+
+    /// Decrypt database
+    Unlock {
+        /// Number of hash iterations
+        #[arg(default_value = "8")]
+        iterations: u32,
+    },
+
+    /// Import bookmarks from file
+    Import {
+        /// File path to import from
+        file: String,
+    },
+
+    /// Export bookmarks to file
+    Export {
+        /// File path to export to
+        file: String,
+    },
+
+    /// Open bookmark(s) in browser
+    Open {
+        /// Bookmark indices to open
+        #[arg(num_args = 0..)]
+        ids: Vec<String>,
+    },
+
+    /// Start interactive mode
+    Interactive,
+}
+
+pub fn handle_args(
+    cli: Cli,
+    db: &BukuDb,
+    db_path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cli.command {
+        Some(Commands::Add {
+            url,
+            tag,
+            title,
+            comment,
+            offline,
+        }) => {
+            let tags = tag.unwrap_or_default();
+
+            if !offline {
+                println!("Fetching metadata for: {}", url);
             }
-        } else {
-            println!("Update requires an index (for now)");
-        }
-    } else if let Some(delete_args) = cli.delete {
-        // Handle delete
-        if let Some(index_str) = delete_args.get(0) {
-             if let Ok(id) = index_str.parse::<usize>() {
-                 db.delete_rec(id)?;
-                 println!("Deleted bookmark at index {}", id);
-             } else {
-                 println!("Invalid index: {}", index_str);
-             }
-        } else {
-            println!("Delete requires an index");
-        }
-    } else if !cli.keywords.is_empty() || cli.sany.is_some() || cli.sall.is_some() || cli.sreg.is_some() {
-        // Handle search
-        let keywords = if let Some(k) = &cli.sany {
-            k
-        } else if let Some(k) = &cli.sall {
-            k
-        } else if let Some(k) = &cli.sreg {
-            // Regex search takes a single string usually, but our struct has Option<String>
-            // We need to pass it as a slice.
-            // Wait, sreg is Option<String>.
-            // We can construct a vec.
-            // But we need to handle the case where keywords are positional args too.
-            // If positional args are present, they are ANY search by default.
 
-            &cli.keywords
-        } else {
-            &cli.keywords
-        };
+            let fetch_result = if !offline {
+                fetch::fetch_data(&url).unwrap_or(fetch::FetchResult {
+                    url: url.clone(),
+                    title: "".to_string(),
+                    desc: "".to_string(),
+                    keywords: "".to_string(),
+                })
+            } else {
+                fetch::FetchResult {
+                    url: url.clone(),
+                    title: "".to_string(),
+                    desc: "".to_string(),
+                    keywords: "".to_string(),
+                }
+            };
 
-        let any = cli.sany.is_some() || (!cli.keywords.is_empty() && cli.sall.is_none());
-        let regex = cli.sreg.is_some();
+            let final_title = if let Some(t) = title {
+                t
+            } else if !fetch_result.title.is_empty() {
+                fetch_result.title
+            } else {
+                url.clone()
+            };
 
-        // If sreg is present, use that as keyword
-        let search_terms = if let Some(re) = &cli.sreg {
-            vec![re.clone()]
-        } else {
-            keywords.clone()
-        };
+            let desc = comment.unwrap_or(fetch_result.desc);
 
-        println!("Searching for: {:?}", search_terms);
-        let records = db.search(&search_terms, any, cli.deep, regex)?;
-        for (id, url, title, tags, desc) in records {
-            println!("{}. {}\n   > {}\n   + {}\n   # {}", id, title, url, desc, tags);
-        }
-    } else if let Some(iterations) = cli.lock {
-        // Handle lock
-        let password = rpassword::prompt_password("Enter password: ")?;
-        let confirm = rpassword::prompt_password("Confirm password: ")?;
-        if password != confirm {
-            return Err("Passwords do not match".into());
+            let tags_str = if tags.is_empty() {
+                format!(",{},", fetch_result.keywords)
+            } else {
+                format!(",{},", tags.join(","))
+            };
+
+            let id = db.add_rec(&fetch_result.url, &final_title, &tags_str, &desc)?;
+            println!("Added bookmark at index {}", id);
         }
 
-        let enc_path = db_path.with_extension("db.enc");
-        println!("Encrypting {} to {} with {} iterations...", db_path.display(), enc_path.display(), iterations);
-        crypto::BukuCrypt::encrypt_file(iterations, &db_path, &enc_path, &password)?;
-        println!("Encryption complete.");
-    } else if let Some(iterations) = cli.unlock {
-        // Handle unlock
-        let password = rpassword::prompt_password("Enter password: ")?;
-        let enc_path = if db_path.extension().map_or(false, |ext| ext == "enc") {
-            db_path.to_path_buf()
-        } else {
-            db_path.with_extension("db.enc")
-        };
+        Some(Commands::Update {
+            id,
+            url,
+            tag,
+            title,
+            comment,
+            immutable,
+        }) => {
+            let url_ref = url.as_deref();
+            let title_str = title.as_deref();
+            let tags = tag.map(|v| v.join(","));
+            let tags_ref = tags.as_deref();
+            let desc_ref = comment.as_deref();
 
-        // If unlocking, we probably want to decrypt TO the db path.
-        // But if db_path is the .enc file, we need to know where to decrypt to.
-        // Buku usually assumes db.enc -> db.
-        let out_path = if enc_path.extension().map_or(false, |ext| ext == "enc") {
-            enc_path.with_extension("")
-        } else {
-            enc_path.with_extension("db")
-        };
+            db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable)?;
+            println!("Updated bookmark at index {}", id);
+        }
 
-        println!("Decrypting {} to {} with {} iterations...", enc_path.display(), out_path.display(), iterations);
-        crypto::BukuCrypt::decrypt_file(iterations, &out_path, &enc_path, &password)?;
-        println!("Decryption complete.");
-    } else if let Some(export_path) = cli.export {
-        // Handle export
-        import_export::export_bookmarks(&db, &export_path)?;
-        println!("Exported bookmarks to {}", export_path);
-    } else if let Some(import_path) = cli.import {
-        // Handle import
-        import_export::import_bookmarks(&db, &import_path)?;
-        println!("Imported bookmarks from {}", import_path);
-    } else if cli.ai {
-        // Handle auto-import
-        browser::auto_import()?;
-    } else if let Some(open_args) = cli.open {
-        // Handle open
-        if open_args.is_empty() {
-            // Open random?
-            println!("Opening random bookmark (not implemented yet)");
-        } else {
-            // Open by index/range
-            for arg in open_args {
-                if let Ok(id) = arg.parse::<usize>() {
-                    if let Some(rec) = db.get_rec_by_id(id)? {
-                        println!("Opening: {}", rec.0);
-                        browser::open_url(&rec.0)?;
-                    } else {
-                        println!("Index {} not found", id);
+        Some(Commands::Delete {
+            ids,
+            force,
+            retain_order: _,
+        }) => {
+            // Prepare delete operation (business logic)
+            let operation = operations::prepare_delete(&ids, db)?;
+
+            // Handle empty results
+            if operation.bookmarks.is_empty() {
+                match operation.mode {
+                    operations::DeleteMode::ByKeywords(_) => {
+                        println!("No bookmarks found matching the search criteria.");
                     }
-                } else {
-                    println!("Invalid index: {}", arg);
+                    _ => {
+                        println!("No bookmarks to delete.");
+                    }
+                }
+                return Ok(());
+            }
+
+            // Display bookmarks to be deleted (UI concern)
+            match &operation.mode {
+                operations::DeleteMode::All => {
+                    println!("⚠️  DELETE ALL BOOKMARKS:");
+                }
+                operations::DeleteMode::ByKeywords(keywords) => {
+                    println!("Searching for bookmarks matching: {:?}", keywords);
+                    println!("Bookmarks matching search criteria:");
+                }
+                operations::DeleteMode::ByIds(_) => {
+                    println!("Bookmarks to be deleted:");
+                }
+            }
+
+            for bookmark in &operation.bookmarks {
+                println!("  {}. {} - {}", bookmark.id, bookmark.title, bookmark.url);
+            }
+
+            // Ask for confirmation unless --force is used (UI concern)
+            let confirmed = if force {
+                true
+            } else {
+                use std::io::{self, Write};
+
+                let prompt = match operation.mode {
+                    operations::DeleteMode::All => {
+                        format!(
+                            "\n⚠️  DELETE ALL {} bookmark(s)? [y/N]: ",
+                            operation.bookmarks.len()
+                        )
+                    }
+                    _ => {
+                        format!(
+                            "\nDelete {} bookmark(s)? [y/N]: ",
+                            operation.bookmarks.len()
+                        )
+                    }
+                };
+
+                print!("{}", prompt);
+                io::stdout().flush()?;
+
+                let mut response = String::new();
+                io::stdin().read_line(&mut response)?;
+                let response = response.trim().to_lowercase();
+                response == "y" || response == "yes"
+            };
+
+            if confirmed {
+                // Execute deletion (business logic)
+                let count = operations::execute_delete(&operation, db)?;
+                println!("Deleted {} bookmark(s).", count);
+            } else {
+                println!("Deletion cancelled.");
+            }
+        }
+
+        Some(Commands::Print {
+            ids: _,
+            format: _,
+            json: _,
+        }) => {
+            let records = db.get_rec_all()?;
+            for bookmark in records {
+                println!(
+                    "{}. {}\n   > {}\n   + {}\n   # {}",
+                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
+                );
+            }
+        }
+
+        Some(Commands::Search {
+            keywords,
+            all,
+            deep,
+            regex,
+            markers: _,
+        }) => {
+            let any = !all;
+            println!("Searching for: {:?}", keywords);
+            let records = db.search(&keywords, any, deep, regex)?;
+            for bookmark in records {
+                println!(
+                    "{}. {}\n   > {}\n   + {}\n   # {}",
+                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
+                );
+            }
+        }
+
+        Some(Commands::Tag { tags }) => {
+            if tags.is_empty() {
+                println!("Listing all tags (not implemented yet)");
+            } else {
+                println!("Searching tags: {:?}", tags);
+                let records = db.search_tags(&tags)?;
+                for bookmark in records {
+                    println!(
+                        "{}. {}\n   > {}\n   + {}\n   # {}",
+                        bookmark.id,
+                        bookmark.title,
+                        bookmark.url,
+                        bookmark.description,
+                        bookmark.tags
+                    );
                 }
             }
         }
-    } else if let Some(stag_args) = cli.stag {
-        // Handle tag search
-        // If args are empty, list all tags?
-        if stag_args.is_empty() {
-             println!("Listing all tags (not implemented yet)");
-             // TODO: Implement get_all_tags
-        } else {
-             // Search by tags
-             // Logic similar to search but specifically for tags field
-             // And handling + for AND, , for OR
-             println!("Searching tags: {:?}", stag_args);
-             // For now, reuse search with tag marker '#' if we had it, or just search tags field.
-             // But search method searches ALL fields.
-             // We need a specific search_tags method or update search to support field filtering.
-             // Let's update search to support field filtering or just use search for now as a fallback.
-             // Actually, let's implement search_tags in db.rs
-             let records = db.search_tags(&stag_args)?;
-             for (id, url, title, tags, desc) in records {
-                println!("{}. {}\n   > {}\n   + {}\n   # {}", id, title, url, desc, tags);
+
+        Some(Commands::Lock { iterations }) => {
+            let password = rpassword::prompt_password("Enter password: ")?;
+            let confirm = rpassword::prompt_password("Confirm password: ")?;
+            if password != confirm {
+                return Err("Passwords do not match".into());
+            }
+
+            let enc_path = db_path.with_extension("db.enc");
+            println!(
+                "Encrypting {} to {} with {} iterations...",
+                db_path.display(),
+                enc_path.display(),
+                iterations
+            );
+            crypto::BukuCrypt::encrypt_file(iterations, db_path, &enc_path, &password)?;
+            println!("Encryption complete.");
+        }
+
+        Some(Commands::Unlock { iterations }) => {
+            let password = rpassword::prompt_password("Enter password: ")?;
+            let enc_path = if db_path.extension().map_or(false, |ext| ext == "enc") {
+                db_path.to_path_buf()
+            } else {
+                db_path.with_extension("db.enc")
+            };
+
+            let out_path = if enc_path.extension().map_or(false, |ext| ext == "enc") {
+                enc_path.with_extension("")
+            } else {
+                enc_path.with_extension("db")
+            };
+
+            println!(
+                "Decrypting {} to {} with {} iterations...",
+                enc_path.display(),
+                out_path.display(),
+                iterations
+            );
+            crypto::BukuCrypt::decrypt_file(iterations, &out_path, &enc_path, &password)?;
+            println!("Decryption complete.");
+        }
+
+        Some(Commands::Import { file }) => {
+            import_export::import_bookmarks(db, &file)?;
+            println!("Imported bookmarks from {}", file);
+        }
+
+        Some(Commands::Export { file }) => {
+            import_export::export_bookmarks(db, &file)?;
+            println!("Exported bookmarks to {}", file);
+        }
+
+        Some(Commands::Open { ids }) => {
+            if ids.is_empty() {
+                println!("Opening random bookmark (not implemented yet)");
+            } else {
+                for arg in ids {
+                    if let Ok(id) = arg.parse::<usize>() {
+                        if let Some(rec) = db.get_rec_by_id(id)? {
+                            println!("Opening: {}", rec.url);
+                            browser::open_url(&rec.url)?;
+                        } else {
+                            println!("Index {} not found", id);
+                        }
+                    } else {
+                        println!("Invalid index: {}", arg);
+                    }
+                }
             }
         }
-    } else {
-        // Default to list if no args? Or show help?
-        // Original buku shows help or list depending on context, but let's default to list for now if nothing else matches
-        let records = db.get_rec_all()?;
-        for (id, url, title, tags, desc) in records {
-            println!("{}. {}\n   > {}\n   + {}\n   # {}", id, title, url, desc, tags);
+
+        Some(Commands::Interactive) => {
+            let records = db.get_rec_all()?;
+            for bookmark in records {
+                println!(
+                    "{}. {}\n   > {}\n   + {}\n   # {}",
+                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
+                );
+            }
+            interactive::run(db)?;
+        }
+
+        None => {
+            // No subcommand provided
+            if !cli.keywords.is_empty() {
+                // Search with keywords
+                println!("Searching for: {:?}", cli.keywords);
+                let records = db.search(&cli.keywords, true, false, false)?;
+                for bookmark in records {
+                    println!(
+                        "{}. {}\n   > {}\n   + {}\n   # {}",
+                        bookmark.id,
+                        bookmark.title,
+                        bookmark.url,
+                        bookmark.description,
+                        bookmark.tags
+                    );
+                }
+            } else {
+                // Interactive mode
+                let records = db.get_rec_all()?;
+                for bookmark in records {
+                    println!(
+                        "{}. {}\n   > {}\n   + {}\n   # {}",
+                        bookmark.id,
+                        bookmark.title,
+                        bookmark.url,
+                        bookmark.description,
+                        bookmark.tags
+                    );
+                }
+                interactive::run(db)?;
+            }
         }
     }
 
