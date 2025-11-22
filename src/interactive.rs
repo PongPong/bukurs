@@ -5,7 +5,7 @@ use std::error::Error;
 
 pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
     let mut rl = DefaultEditor::new()?;
-    
+
     loop {
         let readline = rl.readline("buku > ");
         match readline {
@@ -15,7 +15,7 @@ pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
                     continue;
                 }
                 rl.add_history_entry(line)?;
-                
+
                 match line {
                     "q" | "quit" | "exit" => break,
                     "?" | "help" => print_help(),
@@ -23,11 +23,9 @@ pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
                 break;
             }
             Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
                 break;
             }
             Err(err) => {
@@ -46,7 +44,7 @@ PROMPT KEYS:
     s keyword [...]        search for records with ANY keyword
     S keyword [...]        search for records with ALL keywords
     p id|range [...]       print bookmarks by indices and/or ranges
-    q                      quit
+    q, ^D                  quit
     ?                      show this help
 ");
 }
