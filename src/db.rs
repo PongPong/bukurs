@@ -385,8 +385,10 @@ impl BukuDb {
     }
 
     pub fn undo_last(&self) -> Result<Option<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, operation, bookmark_id, data FROM undo_log ORDER BY timestamp DESC LIMIT 1",
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut stmt = tx.prepare(
+            "SELECT id, operation, bookmark_id, data FROM undo_log ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query([])?;
 
@@ -395,17 +397,18 @@ impl BukuDb {
             let operation: String = row.get(1)?;
             let bookmark_id: usize = row.get(2)?;
             let data: String = row.get(3)?;
+            drop(rows);
+            drop(stmt);
 
             match operation.as_str() {
                 "ADD" => {
                     // Undo ADD: Delete the bookmark
-                    self.conn
-                        .execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
+                    tx.execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
                 }
                 "UPDATE" => {
                     // Undo UPDATE: Restore old data
                     if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
-                        self.conn.execute(
+                        tx.execute(
                             "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
                             (
                                 old_bookmark.url,
@@ -420,7 +423,7 @@ impl BukuDb {
                 "DELETE" => {
                     // Undo DELETE: Re-insert the bookmark with original ID
                     if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
-                        self.conn.execute(
+                        tx.execute(
                             "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
                             (
                                 old_bookmark.id,
@@ -436,12 +439,356 @@ impl BukuDb {
             }
 
             // Remove log entry
-            self.conn
-                .execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
+            tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
 
+            tx.commit()?;
             Ok(Some(operation))
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup_test_db() -> (BukuDb, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let db = BukuDb::init(&db_path).unwrap();
+        (db, temp_dir)
+    }
+
+    #[test]
+    fn test_add_rec() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec(
+                "https://example.com",
+                "Example Site",
+                ",test,",
+                "A test bookmark",
+            )
+            .unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_add_duplicate_url() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec("https://example.com", "Example", ",test,", "Test")
+            .unwrap();
+        let result = db.add_rec("https://example.com", "Example2", ",test,", "Test2");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_rec_by_id() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Example", ",test,", "Description")
+            .unwrap();
+
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(bookmark.id, id);
+        assert_eq!(bookmark.url, "https://example.com");
+        assert_eq!(bookmark.title, "Example");
+        assert_eq!(bookmark.tags, ",test,");
+        assert_eq!(bookmark.description, "Description");
+    }
+
+    #[test]
+    fn test_get_rec_by_id_not_found() {
+        let (db, _temp) = setup_test_db();
+        let bookmark = db.get_rec_by_id(999).unwrap();
+        assert!(bookmark.is_none());
+    }
+
+    #[test]
+    fn test_get_rec_all() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec("https://example1.com", "Example 1", ",test,", "Desc1")
+            .unwrap();
+        db.add_rec("https://example2.com", "Example 2", ",test,", "Desc2")
+            .unwrap();
+
+        let bookmarks = db.get_rec_all().unwrap();
+        assert_eq!(bookmarks.len(), 2);
+    }
+
+    #[test]
+    fn test_update_rec() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Original", ",test,", "Original desc")
+            .unwrap();
+
+        db.update_rec(
+            id,
+            Some("https://updated.com"),
+            Some("Updated"),
+            Some(",updated,"),
+            Some("Updated desc"),
+            None,
+        )
+        .unwrap();
+
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(bookmark.url, "https://updated.com");
+        assert_eq!(bookmark.title, "Updated");
+        assert_eq!(bookmark.tags, ",updated,");
+        assert_eq!(bookmark.description, "Updated desc");
+    }
+
+    #[test]
+    fn test_update_partial() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Original", ",test,", "Original desc")
+            .unwrap();
+
+        db.update_rec(id, None, Some("New Title"), None, None, None)
+            .unwrap();
+
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(bookmark.url, "https://example.com"); // unchanged
+        assert_eq!(bookmark.title, "New Title"); // changed
+        assert_eq!(bookmark.tags, ",test,"); // unchanged
+    }
+
+    #[test]
+    fn test_delete_rec() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Example", ",test,", "Desc")
+            .unwrap();
+
+        db.delete_rec(id).unwrap();
+
+        let bookmark = db.get_rec_by_id(id).unwrap();
+        assert!(bookmark.is_none());
+    }
+
+    #[test]
+    fn test_search_keyword() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust",
+            ",programming,",
+            "Rust language",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",programming,",
+            "Python language",
+        )
+        .unwrap();
+
+        let results = db
+            .search(&vec!["rust".to_string()], true, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Rust");
+    }
+
+    #[test]
+    fn test_search_multiple_any() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust",
+            ",programming,",
+            "Systems programming",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",programming,",
+            "Python scripting",
+        )
+        .unwrap();
+
+        let results = db
+            .search(
+                &vec!["rust".to_string(), "python".to_string()],
+                true,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_search_multiple_all() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust Programming",
+            ",rust,",
+            "Learn Rust",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",python,",
+            "Python language",
+        )
+        .unwrap();
+
+        let results = db
+            .search(
+                &vec!["rust".to_string(), "programming".to_string()],
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Rust Programming");
+    }
+
+    #[test]
+    fn test_search_tags() {
+        let (db, _temp) = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust",
+            ",programming,rust,",
+            "Rust language",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",programming,python,",
+            "Python language",
+        )
+        .unwrap();
+
+        let results = db.search_tags(&vec!["rust".to_string()]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Rust");
+    }
+
+    #[test]
+    fn test_undo_add() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Example", ",test,", "Desc")
+            .unwrap();
+
+        // Verify it was added
+        assert!(db.get_rec_by_id(id).unwrap().is_some());
+
+        // Undo the add
+        let op = db.undo_last().unwrap();
+        assert_eq!(op, Some("ADD".to_string()));
+
+        // Verify it was deleted
+        assert!(db.get_rec_by_id(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_undo_update() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Original", ",test,", "Original desc")
+            .unwrap();
+
+        db.update_rec(id, None, Some("Updated"), None, None, None)
+            .unwrap();
+
+        // Verify it was updated
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(bookmark.title, "Updated");
+
+        // Undo the update (this should revert to original state)
+        let op = db.undo_last().unwrap();
+        assert_eq!(op, Some("UPDATE".to_string()));
+
+        // Verify it was reverted
+        let bookmark = db.get_rec_by_id(id).unwrap();
+        assert!(
+            bookmark.is_some(),
+            "Bookmark should exist after undo update"
+        );
+        assert_eq!(bookmark.unwrap().title, "Original");
+    }
+
+    #[test]
+    fn test_undo_delete() {
+        let (db, _temp) = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Example", ",test,", "Desc")
+            .unwrap();
+
+        let original = db.get_rec_by_id(id).unwrap().unwrap();
+
+        db.delete_rec(id).unwrap();
+
+        // Verify it was deleted
+        assert!(db.get_rec_by_id(id).unwrap().is_none());
+
+        // Undo the delete
+        let op = db.undo_last().unwrap();
+        assert_eq!(op, Some("DELETE".to_string()));
+
+        // Verify it was restored
+        let restored = db.get_rec_by_id(id).unwrap();
+        assert!(
+            restored.is_some(),
+            "Bookmark should exist after undo delete"
+        );
+        let restored = restored.unwrap();
+        assert_eq!(restored.url, original.url);
+        assert_eq!(restored.title, original.title);
+    }
+
+    #[test]
+    fn test_undo_empty() {
+        let (db, _temp) = setup_test_db();
+        let result = db.undo_last().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_transaction_atomicity() {
+        let (db, _temp) = setup_test_db();
+
+        // Add a bookmark
+        let id = db
+            .add_rec("https://example.com", "Example", ",test,", "Desc")
+            .unwrap();
+
+        // Try to add duplicate (should fail)
+        let result = db.add_rec("https://example.com", "Duplicate", ",test,", "Desc");
+        assert!(result.is_err());
+
+        // Verify original is still there
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(bookmark.title, "Example");
+
+        // Verify undo log only has one entry (the successful add)
+        let undo = db.undo_last().unwrap();
+        assert_eq!(undo, Some("ADD".to_string()));
+
+        // Verify no more undo entries
+        let undo2 = db.undo_last().unwrap();
+        assert!(undo2.is_none());
+    }
+
+    #[test]
+    fn test_empty_search() {
+        let (db, _temp) = setup_test_db();
+        let results = db.search(&vec![], true, false, false).unwrap();
+        assert_eq!(results.len(), 0);
     }
 }
