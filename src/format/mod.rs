@@ -37,7 +37,11 @@ impl OutputFormat {
         }
     }
 
-    pub fn print_bookmarks(self: Self, records: &Vec<crate::models::bookmark::Bookmark>) {
+    pub fn print_bookmarks(
+        self: Self,
+        records: &Vec<crate::models::bookmark::Bookmark>,
+        no_color: bool,
+    ) {
         match self {
             OutputFormat::Json => {
                 for b in records {
@@ -61,7 +65,12 @@ impl OutputFormat {
             }
             OutputFormat::Colored => {
                 for b in records {
-                    println!("{}", ColorizeBookmark(b).to_colored());
+                    if no_color {
+                        // Plain text output
+                        println!("{}", b.to_string());
+                    } else {
+                        println!("{}", ColorizeBookmark(b).to_colored());
+                    }
                 }
             }
         }

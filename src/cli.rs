@@ -30,6 +30,10 @@ pub struct Cli {
     #[arg(short = 'o', long)]
     pub open: bool,
 
+    /// Limit number of results shown (shows last N entries)
+    #[arg(short = 'n', long)]
+    pub limit: Option<usize>,
+
     /// Search keywords (when no subcommand is provided)
     #[arg(name = "KEYWORD")]
     pub keywords: Vec<String>,
@@ -108,10 +112,6 @@ pub enum Commands {
         /// Bookmark indices or ranges to print
         #[arg(num_args = 0..)]
         ids: Vec<String>,
-
-        /// Limit fields in output
-        #[arg(short, long)]
-        format: Option<String>,
 
         /// Bitwise column selection. Combine values to display multiple fields:
         ///    1  URL
@@ -353,17 +353,24 @@ pub fn handle_args(
 
         Some(Commands::Print {
             ids: _,
-            format,
             columns: _,
             json: _,
         }) => {
-            let records = db.get_rec_all()?;
-            let format: OutputFormat = format
+            let mut records = db.get_rec_all()?;
+
+            // Apply limit if specified
+            if let Some(limit) = cli.limit {
+                let start = records.len().saturating_sub(limit);
+                records = records.into_iter().skip(start).collect();
+            }
+
+            let format: OutputFormat = cli
+                .format
                 .as_deref() // Option<&str>
                 .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
                 .unwrap_or(OutputFormat::Colored); // default
 
-            format.print_bookmarks(&records);
+            format.print_bookmarks(&records, cli.nc);
         }
 
         Some(Commands::Search {
@@ -375,13 +382,21 @@ pub fn handle_args(
         }) => {
             let any = !all;
             eprintln!("Searching for: {:?}", keywords);
-            let records = db.search(&keywords, any, deep, regex)?;
-            for bookmark in records {
-                println!(
-                    "{}. {}\n   > {}\n   + {}\n   # {}",
-                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
-                );
+            let mut records = db.search(&keywords, any, deep, regex)?;
+
+            // Apply limit if specified
+            if let Some(limit) = cli.limit {
+                let start = records.len().saturating_sub(limit);
+                records = records.into_iter().skip(start).collect();
             }
+
+            let format: OutputFormat = cli
+                .format
+                .as_deref() // Option<&str>
+                .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                .unwrap_or(OutputFormat::Colored); // default
+
+            format.print_bookmarks(&records, cli.nc);
         }
 
         Some(Commands::Tag { tags }) => {
@@ -389,10 +404,16 @@ pub fn handle_args(
                 eprintln!("Listing all tags (not implemented yet)");
             } else {
                 eprintln!("Searching tags: {:?}", tags);
-                let records = db.search_tags(&tags)?;
+                let mut records = db.search_tags(&tags)?;
                 if records.is_empty() {
                     eprintln!("No bookmarks found with the specified tags.");
                     return Ok(());
+                }
+
+                // Apply limit if specified
+                if let Some(limit) = cli.limit {
+                    let start = records.len().saturating_sub(limit);
+                    records = records.into_iter().skip(start).collect();
                 }
 
                 let format: OutputFormat = cli
@@ -400,7 +421,7 @@ pub fn handle_args(
                     .as_deref() // Option<&str>
                     .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
                     .unwrap_or(OutputFormat::Colored); // default
-                format.print_bookmarks(&records);
+                format.print_bookmarks(&records, cli.nc);
             }
         }
 
@@ -497,7 +518,6 @@ pub fn handle_args(
             } else {
                 None
             };
-            // println!("Fuzzy searching for: {:?}", query);
 
             let records = db.get_rec_all()?;
             if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query.as_deref())? {
@@ -512,7 +532,7 @@ pub fn handle_args(
                         .unwrap_or(OutputFormat::Colored); // default
                                                            // Display selected bookmark
                     let selected = vec![selected];
-                    format.print_bookmarks(&selected);
+                    format.print_bookmarks(&selected, cli.nc);
                 }
             }
         }
