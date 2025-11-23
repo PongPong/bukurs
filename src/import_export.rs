@@ -1,5 +1,5 @@
 use crate::db::BukuDb;
-use crate::models::Bookmark;
+use crate::models::bookmark::Bookmark;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -51,7 +51,11 @@ fn export_html(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error
 fn export_md(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(path)?;
     for bookmark in records {
-        writeln!(file, "[{}]({}) <!-- {} -->", bookmark.title, bookmark.url, bookmark.tags)?;
+        writeln!(
+            file,
+            "[{}]({}) <!-- {} -->",
+            bookmark.title, bookmark.url, bookmark.tags
+        )?;
     }
     Ok(())
 }
@@ -65,7 +69,11 @@ fn export_org(records: &Vec<Bookmark>, path: &Path) -> Result<(), Box<dyn Error>
         } else {
             format!(" :{}", bookmark.tags.replace(",", ":"))
         };
-        writeln!(file, "* [[{}][{}]] {}:", bookmark.url, bookmark.title, org_tags)?;
+        writeln!(
+            file,
+            "* [[{}][{}]] {}:",
+            bookmark.url, bookmark.title, org_tags
+        )?;
     }
     Ok(())
 }

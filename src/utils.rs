@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-
 pub fn get_default_dbdir() -> PathBuf {
     if let Ok(path) = std::env::var("BUKU_DEFAULT_DBDIR") {
         return PathBuf::from(path);

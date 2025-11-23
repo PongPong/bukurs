@@ -1,5 +1,5 @@
 use crate::db::BukuDb;
-use crate::models::Bookmark;
+use crate::models::bookmark::Bookmark;
 
 /// Deletion modes supported by the application
 #[derive(Debug, Clone, PartialEq)]
@@ -25,12 +25,12 @@ pub struct DeleteOperation {
 /// Check if input looks like an ID or range (numeric), not a keyword
 pub fn is_id_or_range(input: &str) -> bool {
     let input = input.trim();
-    
+
     // Wildcard is considered ID-like
     if input == "*" {
         return true;
     }
-    
+
     // Range format: "5-10"
     if input.contains('-') {
         let parts: Vec<&str> = input.split('-').collect();
@@ -39,7 +39,7 @@ pub fn is_id_or_range(input: &str) -> bool {
         }
         return false;
     }
-    
+
     // Single ID: "5"
     input.parse::<usize>().is_ok()
 }
@@ -50,7 +50,10 @@ pub fn is_id_or_range(input: &str) -> bool {
 /// - Single IDs: "5"
 /// - Ranges: "1-5"
 /// - Multiple: "1 3 5-7"
-pub fn parse_ranges(inputs: &[String], db: &BukuDb) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
+pub fn parse_ranges(
+    inputs: &[String],
+    db: &BukuDb,
+) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
     let mut ids = Vec::new();
 
     // Get all bookmarks to find valid IDs
@@ -63,7 +66,7 @@ pub fn parse_ranges(inputs: &[String], db: &BukuDb) -> Result<Vec<usize>, Box<dy
 
     for input in inputs {
         let input = input.trim();
-        
+
         if input == "*" {
             // Wildcard - return all IDs
             return Ok(all_ids);
@@ -71,7 +74,8 @@ pub fn parse_ranges(inputs: &[String], db: &BukuDb) -> Result<Vec<usize>, Box<dy
             // Range: "5-10"
             let parts: Vec<&str> = input.split('-').collect();
             if parts.len() == 2 {
-                if let (Ok(start), Ok(end)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                if let (Ok(start), Ok(end)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>())
+                {
                     for id in start..=end {
                         if all_ids.contains(&id) {
                             ids.push(id);
@@ -149,7 +153,7 @@ pub fn execute_delete(
     // Delete in reverse order to maintain indices
     let mut sorted_ids = operation.ids_to_delete.clone();
     sorted_ids.sort_by(|a, b| b.cmp(a)); // Sort descending
-    
+
     for id in &sorted_ids {
         db.delete_rec(*id)?;
     }

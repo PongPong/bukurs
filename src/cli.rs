@@ -1,4 +1,11 @@
 use crate::db::BukuDb;
+use crate::format::json::JsonBookmark;
+use crate::format::toml::TomlBookmark;
+use crate::format::toon::ToonBookmark;
+use crate::format::traits::BookmarkFormat;
+use crate::format::yaml::YamlBookmark;
+use crate::format::OutputFormat;
+use crate::output::colorize::{Colorize, ColorizeBookmark};
 use crate::{browser, crypto, fetch, import_export, interactive, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -21,6 +28,9 @@ pub struct Cli {
     /// Show debug information
     #[arg(short = 'g', long = "debug")]
     pub debug: bool,
+
+    #[arg(short = 'f', long)]
+    pub format: Option<String>,
 
     /// Search keywords (when no subcommand is provided)
     #[arg(name = "KEYWORD")]
@@ -103,7 +113,20 @@ pub enum Commands {
 
         /// Limit fields in output
         #[arg(short, long)]
-        format: Option<u8>,
+        format: Option<String>,
+
+        /// Bitwise column selection. Combine values to display multiple fields:
+        ///    1  URL
+        ///    2  Title
+        ///    4  Tags
+        ///    8  Description
+        ///   16  ID
+        /// Examples:
+        ///    1         => URL only
+        ///    5         => URL + Tags (1 | 4)
+        ///    7         => URL + Title + Tags (1 | 2 | 4)
+        #[arg(short, long)]
+        columns: Option<u8>,
 
         /// JSON formatted output
         #[arg(short, long)]
@@ -329,16 +352,17 @@ pub fn handle_args(
 
         Some(Commands::Print {
             ids: _,
-            format: _,
+            format,
+            columns: _,
             json: _,
         }) => {
             let records = db.get_rec_all()?;
-            for bookmark in records {
-                println!(
-                    "{}. {}\n   > {}\n   + {}\n   # {}",
-                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
-                );
-            }
+            let format: OutputFormat = format
+                .as_deref() // Option<&str>
+                .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                .unwrap_or(OutputFormat::Colored); // default
+
+            format.print_bookmarks(&records);
         }
 
         Some(Commands::Search {
@@ -450,13 +474,7 @@ pub fn handle_args(
         }
 
         Some(Commands::Interactive) => {
-            let records = db.get_rec_all()?;
-            for bookmark in records {
-                println!(
-                    "{}. {}\n   > {}\n   + {}\n   # {}",
-                    bookmark.id, bookmark.title, bookmark.url, bookmark.description, bookmark.tags
-                );
-            }
+            // let records = db.get_rec_all()?;
             interactive::run(db)?;
         }
 
@@ -466,29 +484,21 @@ pub fn handle_args(
                 // Search with keywords
                 println!("Searching for: {:?}", cli.keywords);
                 let records = db.search(&cli.keywords, true, false, false)?;
-                for bookmark in records {
-                    println!(
-                        "{}. {}\n   > {}\n   + {}\n   # {}",
-                        bookmark.id,
-                        bookmark.title,
-                        bookmark.url,
-                        bookmark.description,
-                        bookmark.tags
-                    );
-                }
+                let format: OutputFormat = cli
+                    .format
+                    .as_deref() // Option<&str>
+                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                    .unwrap_or(OutputFormat::Colored); // default
+                format.print_bookmarks(&records);
             } else {
                 // Interactive mode
                 let records = db.get_rec_all()?;
-                for bookmark in records {
-                    println!(
-                        "{}. {}\n   > {}\n   + {}\n   # {}",
-                        bookmark.id,
-                        bookmark.title,
-                        bookmark.url,
-                        bookmark.description,
-                        bookmark.tags
-                    );
-                }
+                let format: OutputFormat = cli
+                    .format
+                    .as_deref() // Option<&str>
+                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                    .unwrap_or(OutputFormat::Colored); // default
+                format.print_bookmarks(&records);
                 interactive::run(db)?;
             }
         }

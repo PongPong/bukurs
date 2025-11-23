@@ -1,13 +1,15 @@
-mod db;
-mod crypto;
-mod fetch;
-mod utils;
-mod interactive;
-mod import_export;
 mod browser;
 mod cli;
-mod operations;
+mod crypto;
+mod db;
+mod fetch;
+mod format;
+mod import_export;
+mod interactive;
 mod models;
+mod operations;
+mod output;
+mod utils;
 
 use clap::Parser;
 

@@ -1,10 +1,10 @@
 use aes::Aes256;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use rand::{thread_rng, RngCore};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
-use rand::{RngCore, thread_rng};
 
 type Aes256CbcEnc = cbc::Encryptor<Aes256>;
 type Aes256CbcDec = cbc::Decryptor<Aes256>;
@@ -55,12 +55,12 @@ impl BukuCrypt {
             // Padding
             let padding_len = 16 - (read_bytes % 16);
             let padding_len = if padding_len == 0 { 0 } else { padding_len };
-            
+
             let mut padded_chunk = chunk.to_vec();
             if padding_len > 0 {
-                 padded_chunk.extend(std::iter::repeat_n(b' ', padding_len));
+                padded_chunk.extend(std::iter::repeat_n(b' ', padding_len));
             }
-            
+
             for block_chunk in padded_chunk.chunks_mut(16) {
                 let block = cbc::cipher::generic_array::GenericArray::from_mut_slice(block_chunk);
                 encryptor.encrypt_block_mut(block);
@@ -78,7 +78,7 @@ impl BukuCrypt {
         password: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut infp = File::open(encfile)?;
-        
+
         let mut size_bytes = [0u8; 8];
         infp.read_exact(&mut size_bytes)?;
         let size = u64::from_le_bytes(size_bytes);
@@ -104,20 +104,20 @@ impl BukuCrypt {
             if read_bytes == 0 {
                 break;
             }
-            
+
             let chunk = &mut buffer[..read_bytes];
             // Decrypt in place
             // Since we read chunks, they should be multiples of 16 (except maybe if file is corrupted or end?)
             // The encrypted file is padded to 16 bytes.
-            
+
             for block_chunk in chunk.chunks_mut(16) {
                 let block = cbc::cipher::generic_array::GenericArray::from_mut_slice(block_chunk);
                 decryptor.decrypt_block_mut(block);
             }
-            
+
             outfp.write_all(chunk)?;
         }
-        
+
         outfp.set_len(size)?;
 
         let dbhash = Self::get_filehash(dbfile)?;
@@ -149,7 +149,7 @@ impl BukuCrypt {
         // Python: key = ('%s%s' % (self.password, salt.decode('utf-8', 'replace'))).encode('utf-8')
         let salt_str = String::from_utf8_lossy(salt);
         let key_material = format!("{}{}", password, salt_str).into_bytes();
-        
+
         let mut key = [0u8; 32];
         // Initial hash
         // Python loop:
@@ -157,15 +157,15 @@ impl BukuCrypt {
         //     key = self._sha256(key).digest()
         // Wait, the python code starts with the concatenated string as `key`.
         // Then hashes it `iterations` times.
-        
+
         let mut current_hash = key_material;
-        
+
         for _ in 0..iterations {
             let mut hasher = Sha256::new();
             hasher.update(&current_hash);
             current_hash = hasher.finalize().to_vec();
         }
-        
+
         key.copy_from_slice(&current_hash);
         key
     }
