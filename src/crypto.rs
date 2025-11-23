@@ -1,6 +1,6 @@
 use aes::Aes256;
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
-use rand::{thread_rng, RngCore};
+use rand::{rng, RngCore};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -26,10 +26,10 @@ impl BukuCrypt {
         let filesize = fs::metadata(dbfile)?.len();
 
         let mut salt = [0u8; Self::SALT_SIZE];
-        thread_rng().fill_bytes(&mut salt);
+        rng().fill_bytes(&mut salt);
 
         let mut iv = [0u8; 16];
-        thread_rng().fill_bytes(&mut iv);
+        rng().fill_bytes(&mut iv);
 
         let key = Self::derive_key(password, &salt, iterations);
         let encryptor = Aes256CbcEnc::new(&key.into(), &iv.into());
