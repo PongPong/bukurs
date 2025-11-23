@@ -50,10 +50,11 @@ pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
     temp_file.write_all(yaml_content.as_bytes())?;
 
     let temp_path = temp_file.path().to_owned();
+    let temp_path_str = temp_path.to_string_lossy();
 
-    // Open editor
-    let status = Command::new(&editor)
-        .arg(&temp_path)
+    // Open editor - use shell to support complex EDITOR commands
+    // (e.g., "env NVIM_APPNAME=astronvim nvim")
+    let status = build_editor_command(&editor, &temp_path_str)
         .status()
         .map_err(|e| EditorError::EditorLaunch(editor.clone(), e))?;
 
@@ -66,6 +67,19 @@ pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
 
     // Parse the edited YAML
     parse_edited_bookmark(&edited_content, bookmark.id)
+}
+
+/// Build the command to launch the editor via shell
+fn build_editor_command(editor: &str, file_path: &str) -> Command {
+    if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", &format!("{} {}", editor, file_path)]);
+        cmd
+    } else {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(format!("{} {}", editor, file_path));
+        cmd
+    }
 }
 
 fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> {
@@ -281,6 +295,45 @@ description: Single line desc";
     fn test_parse_trims_whitespace(#[case] content: &str, #[case] expected_title: &str) {
         let result = parse_edited_bookmark(content, 1).unwrap();
         assert_eq!(result.title, expected_title);
+    }
+
+    #[test]
+    fn test_build_editor_command_simple() {
+        let cmd = build_editor_command("vim", "/tmp/test.txt");
+        let program = cmd.get_program().to_string_lossy();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(program, "cmd");
+        } else {
+            assert_eq!(program, "sh");
+        }
+    }
+
+    #[test]
+    fn test_build_editor_command_complex() {
+        let editor = "env NVIM_APPNAME=astronvim nvim";
+        let cmd = build_editor_command(editor, "/tmp/test.txt");
+        let program = cmd.get_program().to_string_lossy();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(program, "cmd");
+        } else {
+            assert_eq!(program, "sh");
+        }
+    }
+
+    #[rstest]
+    #[case("vim")]
+    #[case("nvim")]
+    #[case("code --wait")]
+    #[case("env NVIM_APPNAME=astronvim nvim")]
+    #[case("emacs -nw")]
+    fn test_build_editor_command_various_editors(#[case] editor: &str) {
+        let cmd = build_editor_command(editor, "/tmp/test.txt");
+
+        // Just verify it builds without panicking
+        let program = cmd.get_program();
+        assert!(!program.is_empty());
     }
 
     #[test]
