@@ -4,10 +4,10 @@ use std::io::Cursor;
 
 pub fn run_fuzzy_search(
     bookmarks: &[Bookmark],
-    query: Option<&str>,
+    query: Option<String>,
 ) -> Result<Option<Bookmark>, Box<dyn std::error::Error>> {
     let options = SkimOptionsBuilder::default()
-        .height(Some("50%"))
+        .height(String::from("50%"))
         .multi(false)
         .query(query)
         .build()

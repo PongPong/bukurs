@@ -1,5 +1,6 @@
 use crate::db::BukuDb;
 use crate::format::OutputFormat;
+use crate::models::errors::AppError;
 use crate::{browser, crypto, fetch, import_export, interactive, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -196,6 +197,12 @@ pub enum Commands {
     /// Start interactive shell
     Shell,
 
+    /// Edit bookmark in $EDITOR
+    Edit {
+        /// Bookmark ID to edit
+        id: usize,
+    },
+
     /// Undo last operation
     Undo,
 }
@@ -251,8 +258,24 @@ pub fn handle_args(
                 format!(",{},", tags.join(","))
             };
 
-            let id = db.add_rec(&fetch_result.url, &final_title, &tags_str, &desc)?;
-            eprintln!("Added bookmark at index {}", id);
+            match db.add_rec(&fetch_result.url, &final_title, &tags_str, &desc) {
+                Ok(id) => {
+                    eprintln!("Added bookmark at index {}", id);
+                }
+                Err(e) => {
+                    if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                        // 2067 = SQLITE_CONSTRAINT_UNIQUE
+                        if err.extended_code == 2067 {
+                            eprintln!("Error: Another bookmark with this URL already exists");
+                            eprintln!("URL: {}", url);
+                            return Err(AppError::DuplicateUrl.into());
+                        }
+                    }
+
+                    // For all other DB errors, return a generic one
+                    return Err(AppError::DbError.into());
+                }
+            }
         }
 
         Some(Commands::Update {
@@ -269,8 +292,23 @@ pub fn handle_args(
             let tags_ref = tags.as_deref();
             let desc_ref = comment.as_deref();
 
-            db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable)?;
-            eprintln!("Updated bookmark at index {}", id);
+            match db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable) {
+                Ok(()) => {
+                    eprintln!("Updated bookmark at index {}", id);
+                }
+                Err(e) => {
+                    if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                        if err.extended_code == 2067 {
+                            // UNIQUE constraint
+                            eprintln!("Error: Another bookmark with this URL already exists");
+                            if let Some(new_url) = url {
+                                eprintln!("URL: {}", new_url);
+                            }
+                        }
+                    }
+                    return Err(e.into());
+                }
+            }
         }
 
         Some(Commands::Delete {
@@ -501,6 +539,50 @@ pub fn handle_args(
             interactive::run(db)?;
         }
 
+        Some(Commands::Edit { id }) => {
+            // Fetch the bookmark
+            let bookmark = db
+                .get_rec_by_id(id)?
+                .ok_or_else(|| format!("Bookmark {} not found", id))?;
+
+            eprintln!("Opening bookmark #{} in editor...", id);
+
+            // Edit the bookmark
+            match crate::editor::edit_bookmark(&bookmark) {
+                Ok(edited) => {
+                    // Update the database
+                    match db.update_rec(
+                        id,
+                        Some(&edited.url),
+                        Some(&edited.title),
+                        Some(&edited.tags),
+                        Some(&edited.description),
+                        None,
+                    ) {
+                        Ok(()) => {
+                            eprintln!("Bookmark {} updated successfully", id);
+                        }
+                        Err(e) => {
+                            if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                                if err.extended_code == 2067 {
+                                    // UNIQUE constraint failed
+                                    eprintln!(
+                                        "Error: Another bookmark with this URL already exists"
+                                    );
+                                    eprintln!("URL: {}", edited.url);
+                                    return Err(AppError::DuplicateUrl.into());
+                                }
+                            }
+                            return Err(AppError::DbError.into());
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Edit cancelled or failed: {}", e);
+                }
+            }
+        }
+
         Some(Commands::Undo) => {
             if let Some(op) = db.undo_last()? {
                 eprintln!("Undid last operation: {}", op);
@@ -520,7 +602,7 @@ pub fn handle_args(
             };
 
             let records = db.get_rec_all()?;
-            if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query.as_deref())? {
+            if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query)? {
                 if cli.open {
                     eprintln!("Opening: {}", selected.url);
                     browser::open_url(&selected.url)?;

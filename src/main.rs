@@ -2,6 +2,7 @@ mod browser;
 mod cli;
 mod crypto;
 mod db;
+mod editor;
 mod fetch;
 mod format;
 mod fuzzy;
