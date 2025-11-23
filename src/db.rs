@@ -1,6 +1,7 @@
 use crate::models::bookmark::Bookmark;
 use rusqlite::{Connection, Result};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct BukuDb {
     conn: Connection,
@@ -45,7 +46,11 @@ impl BukuDb {
         )?;
         let id = tx.last_insert_rowid() as usize;
 
-        let timestamp = chrono::Utc::now().timestamp();
+        // let timestamp = chrono::Utc::now().timestamp();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs() as i64; // i64 to match chrono::timestamp type
         tx.execute(
             "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
             (timestamp, "ADD", id, ""),
@@ -144,7 +149,10 @@ impl BukuDb {
             // Log undo
             if let Some(ref bookmark) = current {
                 let data = serde_json::to_string(bookmark).unwrap_or_default();
-                let timestamp = chrono::Utc::now().timestamp();
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs() as i64; // i64 to match chrono::timestamp type
                 tx.execute(
                 "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
                 (timestamp, "UPDATE", id, &data),
@@ -226,7 +234,10 @@ impl BukuDb {
             // Log undo
             if let Some(ref bookmark) = current {
                 let data = serde_json::to_string(bookmark).unwrap_or_default();
-                let timestamp = chrono::Utc::now().timestamp();
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_secs() as i64; // i64 to match chrono::timestamp type
                 tx.execute(
                     "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
                     (timestamp, "DELETE", id, &data),
