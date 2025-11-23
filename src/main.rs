@@ -4,6 +4,7 @@ mod crypto;
 mod db;
 mod fetch;
 mod format;
+mod fuzzy;
 mod import_export;
 mod interactive;
 mod models;

@@ -1,11 +1,5 @@
 use crate::db::BukuDb;
-use crate::format::json::JsonBookmark;
-use crate::format::toml::TomlBookmark;
-use crate::format::toon::ToonBookmark;
-use crate::format::traits::BookmarkFormat;
-use crate::format::yaml::YamlBookmark;
 use crate::format::OutputFormat;
-use crate::output::colorize::{Colorize, ColorizeBookmark};
 use crate::{browser, crypto, fetch, import_export, interactive, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -31,6 +25,10 @@ pub struct Cli {
 
     #[arg(short = 'f', long)]
     pub format: Option<String>,
+
+    /// Open selected bookmark in browser
+    #[arg(short = 'o', long)]
+    pub open: bool,
 
     /// Search keywords (when no subcommand is provided)
     #[arg(name = "KEYWORD")]
@@ -195,8 +193,8 @@ pub enum Commands {
         ids: Vec<String>,
     },
 
-    /// Start interactive mode
-    Interactive,
+    /// Start interactive shell
+    Shell,
 }
 
 pub fn handle_args(
@@ -473,33 +471,37 @@ pub fn handle_args(
             }
         }
 
-        Some(Commands::Interactive) => {
+        Some(Commands::Shell) => {
             // let records = db.get_rec_all()?;
             interactive::run(db)?;
         }
 
         None => {
-            // No subcommand provided
-            if !cli.keywords.is_empty() {
-                // Search with keywords
-                println!("Searching for: {:?}", cli.keywords);
-                let records = db.search(&cli.keywords, true, false, false)?;
-                let format: OutputFormat = cli
-                    .format
-                    .as_deref() // Option<&str>
-                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
-                    .unwrap_or(OutputFormat::Colored); // default
-                format.print_bookmarks(&records);
+            // No subcommand provided, Search with keywords
+            println!("Searching for: {:?}", cli.keywords);
+            // Fuzzy search with keywords
+            let query = if !cli.keywords.is_empty() {
+                Some(cli.keywords.join(" "))
             } else {
-                // Interactive mode
-                let records = db.get_rec_all()?;
-                let format: OutputFormat = cli
-                    .format
-                    .as_deref() // Option<&str>
-                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
-                    .unwrap_or(OutputFormat::Colored); // default
-                format.print_bookmarks(&records);
-                interactive::run(db)?;
+                None
+            };
+            // println!("Fuzzy searching for: {:?}", query);
+
+            let records = db.get_rec_all()?;
+            if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query.as_deref())? {
+                if cli.open {
+                    println!("Opening: {}", selected.url);
+                    browser::open_url(&selected.url)?;
+                } else {
+                    let format: OutputFormat = cli
+                        .format
+                        .as_deref() // Option<&str>
+                        .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                        .unwrap_or(OutputFormat::Colored); // default
+                                                           // Display selected bookmark
+                    let selected = vec![selected];
+                    format.print_bookmarks(&selected);
+                }
             }
         }
     }
