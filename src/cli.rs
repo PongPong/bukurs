@@ -195,6 +195,9 @@ pub enum Commands {
 
     /// Start interactive shell
     Shell,
+
+    /// Undo last operation
+    Undo,
 }
 
 pub fn handle_args(
@@ -213,7 +216,7 @@ pub fn handle_args(
             let tags = tag.unwrap_or_default();
 
             if !offline {
-                println!("Fetching metadata for: {}", url);
+                eprintln!("Fetching metadata for: {}", url);
             }
 
             let fetch_result = if !offline {
@@ -249,7 +252,7 @@ pub fn handle_args(
             };
 
             let id = db.add_rec(&fetch_result.url, &final_title, &tags_str, &desc)?;
-            println!("Added bookmark at index {}", id);
+            eprintln!("Added bookmark at index {}", id);
         }
 
         Some(Commands::Update {
@@ -267,7 +270,7 @@ pub fn handle_args(
             let desc_ref = comment.as_deref();
 
             db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable)?;
-            println!("Updated bookmark at index {}", id);
+            eprintln!("Updated bookmark at index {}", id);
         }
 
         Some(Commands::Delete {
@@ -282,10 +285,10 @@ pub fn handle_args(
             if operation.bookmarks.is_empty() {
                 match operation.mode {
                     operations::DeleteMode::ByKeywords(_) => {
-                        println!("No bookmarks found matching the search criteria.");
+                        eprintln!("No bookmarks found matching the search criteria.");
                     }
                     _ => {
-                        println!("No bookmarks to delete.");
+                        eprintln!("No bookmarks to delete.");
                     }
                 }
                 return Ok(());
@@ -294,19 +297,19 @@ pub fn handle_args(
             // Display bookmarks to be deleted (UI concern)
             match &operation.mode {
                 operations::DeleteMode::All => {
-                    println!("⚠️  DELETE ALL BOOKMARKS:");
+                    eprintln!("⚠️  DELETE ALL BOOKMARKS:");
                 }
                 operations::DeleteMode::ByKeywords(keywords) => {
-                    println!("Searching for bookmarks matching: {:?}", keywords);
-                    println!("Bookmarks matching search criteria:");
+                    eprintln!("Searching for bookmarks matching: {:?}", keywords);
+                    eprintln!("Bookmarks matching search criteria:");
                 }
                 operations::DeleteMode::ByIds(_) => {
-                    println!("Bookmarks to be deleted:");
+                    eprintln!("Bookmarks to be deleted:");
                 }
             }
 
             for bookmark in &operation.bookmarks {
-                println!("  {}. {} - {}", bookmark.id, bookmark.title, bookmark.url);
+                eprintln!("  {}. {} - {}", bookmark.id, bookmark.title, bookmark.url);
             }
 
             // Ask for confirmation unless --force is used (UI concern)
@@ -342,9 +345,9 @@ pub fn handle_args(
             if confirmed {
                 // Execute deletion (business logic)
                 let count = operations::execute_delete(&operation, db)?;
-                println!("Deleted {} bookmark(s).", count);
+                eprintln!("Deleted {} bookmark(s).", count);
             } else {
-                println!("Deletion cancelled.");
+                eprintln!("Deletion cancelled.");
             }
         }
 
@@ -371,7 +374,7 @@ pub fn handle_args(
             markers: _,
         }) => {
             let any = !all;
-            println!("Searching for: {:?}", keywords);
+            eprintln!("Searching for: {:?}", keywords);
             let records = db.search(&keywords, any, deep, regex)?;
             for bookmark in records {
                 println!(
@@ -383,20 +386,21 @@ pub fn handle_args(
 
         Some(Commands::Tag { tags }) => {
             if tags.is_empty() {
-                println!("Listing all tags (not implemented yet)");
+                eprintln!("Listing all tags (not implemented yet)");
             } else {
-                println!("Searching tags: {:?}", tags);
+                eprintln!("Searching tags: {:?}", tags);
                 let records = db.search_tags(&tags)?;
-                for bookmark in records {
-                    println!(
-                        "{}. {}\n   > {}\n   + {}\n   # {}",
-                        bookmark.id,
-                        bookmark.title,
-                        bookmark.url,
-                        bookmark.description,
-                        bookmark.tags
-                    );
+                if records.is_empty() {
+                    eprintln!("No bookmarks found with the specified tags.");
+                    return Ok(());
                 }
+
+                let format: OutputFormat = cli
+                    .format
+                    .as_deref() // Option<&str>
+                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                    .unwrap_or(OutputFormat::Colored); // default
+                format.print_bookmarks(&records);
             }
         }
 
@@ -415,7 +419,7 @@ pub fn handle_args(
                 iterations
             );
             crypto::BukuCrypt::encrypt_file(iterations, db_path, &enc_path, &password)?;
-            println!("Encryption complete.");
+            eprintln!("Encryption complete.");
         }
 
         Some(Commands::Unlock { iterations }) => {
@@ -439,33 +443,33 @@ pub fn handle_args(
                 iterations
             );
             crypto::BukuCrypt::decrypt_file(iterations, &out_path, &enc_path, &password)?;
-            println!("Decryption complete.");
+            eprintln!("Decryption complete.");
         }
 
         Some(Commands::Import { file }) => {
             import_export::import_bookmarks(db, &file)?;
-            println!("Imported bookmarks from {}", file);
+            eprintln!("Imported bookmarks from {}", file);
         }
 
         Some(Commands::Export { file }) => {
             import_export::export_bookmarks(db, &file)?;
-            println!("Exported bookmarks to {}", file);
+            eprintln!("Exported bookmarks to {}", file);
         }
 
         Some(Commands::Open { ids }) => {
             if ids.is_empty() {
-                println!("Opening random bookmark (not implemented yet)");
+                eprintln!("Opening random bookmark (not implemented yet)");
             } else {
                 for arg in ids {
                     if let Ok(id) = arg.parse::<usize>() {
                         if let Some(rec) = db.get_rec_by_id(id)? {
-                            println!("Opening: {}", rec.url);
+                            eprintln!("Opening: {}", rec.url);
                             browser::open_url(&rec.url)?;
                         } else {
-                            println!("Index {} not found", id);
+                            eprintln!("Index {} not found", id);
                         }
                     } else {
-                        println!("Invalid index: {}", arg);
+                        eprintln!("Invalid index: {}", arg);
                     }
                 }
             }
@@ -476,9 +480,17 @@ pub fn handle_args(
             interactive::run(db)?;
         }
 
+        Some(Commands::Undo) => {
+            if let Some(op) = db.undo_last()? {
+                eprintln!("Undid last operation: {}", op);
+            } else {
+                eprintln!("Nothing to undo.");
+            }
+        }
+
         None => {
             // No subcommand provided, Search with keywords
-            println!("Searching for: {:?}", cli.keywords);
+            eprintln!("Searching for: {:?}", cli.keywords);
             // Fuzzy search with keywords
             let query = if !cli.keywords.is_empty() {
                 Some(cli.keywords.join(" "))
@@ -490,7 +502,7 @@ pub fn handle_args(
             let records = db.get_rec_all()?;
             if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query.as_deref())? {
                 if cli.open {
-                    println!("Opening: {}", selected.url);
+                    eprintln!("Opening: {}", selected.url);
                     browser::open_url(&selected.url)?;
                 } else {
                     let format: OutputFormat = cli

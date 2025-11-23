@@ -22,15 +22,46 @@ impl BukuDb {
             [],
         )?;
 
+        conn.execute(
+            "CREATE TABLE if not exists undo_log (
+                id integer PRIMARY KEY AUTOINCREMENT,
+                timestamp integer,
+                operation text,
+                bookmark_id integer,
+                data text
+            )",
+            [],
+        )?;
+
         Ok(BukuDb { conn })
     }
 
-    pub fn add_rec(&self, url: &str, title: &str, tags: &str, desc: &str) -> Result<usize> {
+    fn log_undo(&self, operation: &str, bookmark_id: usize, data: &str) -> Result<()> {
+        let timestamp = chrono::Utc::now().timestamp();
         self.conn.execute(
+            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
+            (timestamp, operation, bookmark_id, data),
+        )?;
+        Ok(())
+    }
+
+    pub fn add_rec(&self, url: &str, title: &str, tags: &str, desc: &str) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute(
             "INSERT INTO bookmarks (URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4)",
             (url, title, tags, desc),
         )?;
-        Ok(self.conn.last_insert_rowid() as usize)
+        let id = tx.last_insert_rowid() as usize;
+
+        let timestamp = chrono::Utc::now().timestamp();
+        tx.execute(
+            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
+            (timestamp, "ADD", id, ""),
+        )?;
+
+        tx.commit()?;
+        Ok(id)
     }
 
     pub fn get_rec_id(&self, url: &str) -> Result<Option<usize>> {
@@ -113,6 +144,36 @@ impl BukuDb {
         // No, we need to pass the value.
 
         // Let's declare `immutable_val` outside.
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Fetch current state for undo within transaction
+        {
+            let mut stmt =
+                tx.prepare("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
+            let mut rows = stmt.query([id])?;
+            let current = if let Some(row) = rows.next()? {
+                Some(Bookmark::new(
+                    id,
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                ))
+            } else {
+                None
+            };
+
+            // Log undo
+            if let Some(ref bookmark) = current {
+                let data = serde_json::to_string(bookmark).unwrap_or_default();
+                let timestamp = chrono::Utc::now().timestamp();
+                tx.execute(
+                "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
+                (timestamp, "UPDATE", id, &data),
+            )?;
+            }
+        }
+
         let immutable_val = immutable.unwrap_or(0);
 
         if url.is_some() {
@@ -159,13 +220,44 @@ impl BukuDb {
         }
         params.push((":id", &id));
 
-        self.conn.execute(&query, params.as_slice())?;
+        tx.execute(&query, params.as_slice())?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn delete_rec(&self, id: usize) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+        let tx = self.conn.unchecked_transaction()?;
+
+        // Fetch current state for undo within transaction
+        {
+            let mut stmt =
+                tx.prepare("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
+            let mut rows = stmt.query([id])?;
+            let current = if let Some(row) = rows.next()? {
+                Some(Bookmark::new(
+                    id,
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                ))
+            } else {
+                None
+            };
+
+            // Log undo
+            if let Some(ref bookmark) = current {
+                let data = serde_json::to_string(bookmark).unwrap_or_default();
+                let timestamp = chrono::Utc::now().timestamp();
+                tx.execute(
+                    "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
+                    (timestamp, "DELETE", id, &data),
+                )?;
+            }
+        }
+
+        tx.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -290,5 +382,66 @@ impl BukuDb {
             records.push(row?);
         }
         Ok(records)
+    }
+
+    pub fn undo_last(&self) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, operation, bookmark_id, data FROM undo_log ORDER BY timestamp DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+
+        if let Some(row) = rows.next()? {
+            let log_id: usize = row.get(0)?;
+            let operation: String = row.get(1)?;
+            let bookmark_id: usize = row.get(2)?;
+            let data: String = row.get(3)?;
+
+            match operation.as_str() {
+                "ADD" => {
+                    // Undo ADD: Delete the bookmark
+                    self.conn
+                        .execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
+                }
+                "UPDATE" => {
+                    // Undo UPDATE: Restore old data
+                    if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
+                        self.conn.execute(
+                            "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
+                            (
+                                old_bookmark.url,
+                                old_bookmark.title,
+                                old_bookmark.tags,
+                                old_bookmark.description,
+                                bookmark_id,
+                            ),
+                        )?;
+                    }
+                }
+                "DELETE" => {
+                    // Undo DELETE: Re-insert the bookmark with original ID
+                    if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
+                        self.conn.execute(
+                            "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
+                            (
+                                old_bookmark.id,
+                                old_bookmark.url,
+                                old_bookmark.title,
+                                old_bookmark.tags,
+                                old_bookmark.description,
+                            ),
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+
+            // Remove log entry
+            self.conn
+                .execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
+
+            Ok(Some(operation))
+        } else {
+            Ok(None)
+        }
     }
 }
