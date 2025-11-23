@@ -1,17 +1,34 @@
 use crate::models::bookmark::Bookmark;
-use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::process::Command;
 use tempfile::NamedTempFile;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EditorError {
+    #[error("Failed to create temporary file: {0}")]
+    TempFileCreation(#[from] std::io::Error),
+
+    #[error("Failed to launch editor '{0}': {1}")]
+    EditorLaunch(String, std::io::Error),
+
+    #[error("Editor exited with non-zero status")]
+    EditorExitFailure,
+
+    #[error("URL cannot be empty")]
+    EmptyUrl,
+}
+
+pub type Result<T> = std::result::Result<T, EditorError>;
 
 pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
     // Get editor from environment, default to vim
     let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
 
     // Create temporary file with bookmark data in YAML format
-    let mut temp_file = NamedTempFile::new().context("Failed to create temporary file")?;
+    let mut temp_file = NamedTempFile::new()?;
 
     // Write bookmark as YAML
     let yaml_content = format!(
@@ -30,9 +47,7 @@ pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
         bookmark.description.replace("\n", "\n  ")
     );
 
-    temp_file
-        .write_all(yaml_content.as_bytes())
-        .context("Failed to write to temporary file")?;
+    temp_file.write_all(yaml_content.as_bytes())?;
 
     let temp_path = temp_file.path().to_owned();
 
@@ -40,14 +55,14 @@ pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
     let status = Command::new(&editor)
         .arg(&temp_path)
         .status()
-        .context(format!("Failed to launch editor: {}", editor))?;
+        .map_err(|e| EditorError::EditorLaunch(editor.clone(), e))?;
 
     if !status.success() {
-        anyhow::bail!("Editor exited with non-zero status");
+        return Err(EditorError::EditorExitFailure);
     }
 
     // Read edited content
-    let edited_content = fs::read_to_string(&temp_path).context("Failed to read edited file")?;
+    let edited_content = fs::read_to_string(&temp_path)?;
 
     // Parse the edited YAML
     parse_edited_bookmark(&edited_content, bookmark.id)
@@ -108,7 +123,7 @@ fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> 
 
     // Validate
     if url.is_empty() {
-        anyhow::bail!("URL cannot be empty");
+        return Err(EditorError::EmptyUrl);
     }
 
     Ok(Bookmark::new(

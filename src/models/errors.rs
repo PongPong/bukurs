@@ -5,7 +5,4 @@ pub enum AppError {
 
     #[error("Database error")]
     DbError,
-
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
 }
