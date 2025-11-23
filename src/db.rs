@@ -36,15 +36,6 @@ impl BukuDb {
         Ok(BukuDb { conn })
     }
 
-    fn log_undo(&self, operation: &str, bookmark_id: usize, data: &str) -> Result<()> {
-        let timestamp = chrono::Utc::now().timestamp();
-        self.conn.execute(
-            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
-            (timestamp, operation, bookmark_id, data),
-        )?;
-        Ok(())
-    }
-
     pub fn add_rec(&self, url: &str, title: &str, tags: &str, desc: &str) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
 
@@ -62,19 +53,6 @@ impl BukuDb {
 
         tx.commit()?;
         Ok(id)
-    }
-
-    pub fn get_rec_id(&self, url: &str) -> Result<Option<usize>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM bookmarks WHERE URL = ?1")?;
-        let mut rows = stmt.query([url])?;
-
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
-        } else {
-            Ok(None)
-        }
     }
 
     pub fn get_rec_by_id(&self, id: usize) -> Result<Option<Bookmark>> {
