@@ -1,5 +1,6 @@
 mod cli;
 mod editor;
+mod fetch_ui;
 mod format;
 mod interactive;
 mod output;

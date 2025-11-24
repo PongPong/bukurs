@@ -235,6 +235,8 @@ pub fn handle_args(
     db_path: &std::path::Path,
     config: &bukurs::config::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::fetch_ui::fetch_with_spinner;
+
     match cli.command {
         Some(Commands::Add {
             url,
@@ -245,12 +247,8 @@ pub fn handle_args(
         }) => {
             let tags = tag.unwrap_or_default();
 
-            if !offline {
-                eprintln!("Fetching metadata for: {}", url);
-            }
-
             let fetch_result = if !offline {
-                match fetch::fetch_data(&url, Some(&config.user_agent)) {
+                match fetch_with_spinner(&url, &config.user_agent) {
                     Ok(result) => result,
                     Err(e) => {
                         eprintln!("Warning: Failed to fetch metadata: {}", e);
@@ -402,24 +400,8 @@ pub fn handle_args(
                 let mut failed_ids: Vec<usize> = Vec::new();
 
                 for bookmark in &bookmarks {
-                    // Create spinner for current URL
-                    let spinner = multi.insert_before(&pb, ProgressBar::new_spinner());
-                    spinner.set_style(
-                        ProgressStyle::default_spinner()
-                            .template("{spinner:.green} {msg}")
-                            .unwrap(),
-                    );
-
-                    let url_display = if bookmark.url.len() > 60 {
-                        format!("{}...", &bookmark.url[..57])
-                    } else {
-                        bookmark.url.clone()
-                    };
-                    spinner.set_message(format!("Fetching: {}", url_display));
-                    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
-
-                    // Fetch metadata
-                    match fetch::fetch_data(&bookmark.url, Some(&config.user_agent)) {
+                    // Fetch metadata using helper
+                    match fetch_with_spinner(&bookmark.url, &config.user_agent) {
                         Ok(fetch_result) => {
                             // Update bookmark with fetched metadata
                             let new_title = if !fetch_result.title.is_empty() {
@@ -443,34 +425,16 @@ pub fn handle_args(
                                 new_desc,
                                 None, // Don't change immutable flag
                             ) {
-                                Ok(()) => {
-                                    success_count += 1;
-                                    spinner.finish_with_message(format!("✓ {}", url_display));
-                                }
+                                Ok(()) => success_count += 1,
                                 Err(_) => {
                                     failed_count += 1;
                                     failed_ids.push(bookmark.id);
-                                    spinner.finish_with_message(format!(
-                                        "✗ {} (DB error)",
-                                        url_display
-                                    ));
                                 }
                             }
                         }
-                        Err(e) => {
+                        Err(_) => {
                             failed_count += 1;
                             failed_ids.push(bookmark.id);
-                            let error_msg = if e.to_string().contains("403") {
-                                "blocked"
-                            } else if e.to_string().contains("timeout")
-                                || e.to_string().contains("dns")
-                            {
-                                "network error"
-                            } else {
-                                "fetch error"
-                            };
-                            spinner
-                                .finish_with_message(format!("✗ {} ({})", url_display, error_msg));
                         }
                     }
                     pb.inc(1);
@@ -1072,11 +1036,13 @@ mod tests {
     #[test]
     fn test_update_command_details() {
         let cli = parse_args_ok("update 42");
-        match cli.command {
-            Some(Commands::Update { id, .. }) => {
-                assert_eq!(id, 42);
-            }
-            _ => panic!("Expected Update command"),
+        assert!(matches!(cli.command, Some(Commands::Update { .. })));
+
+        // Verify the ids are parsed correctly
+        if let Some(Commands::Update { ids, .. }) = cli.command {
+            assert_eq!(ids, vec!["42".to_string()]);
+        } else {
+            panic!("Expected Update command");
         }
     }
 
