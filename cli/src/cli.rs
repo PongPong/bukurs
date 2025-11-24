@@ -74,8 +74,10 @@ pub enum Commands {
 
     /// Update an existing bookmark
     Update {
-        /// Bookmark index to update
-        id: usize,
+        /// Bookmark indices, ranges (e.g., 1-5), or * for all
+        /// When no edit options are provided, refreshes metadata from web
+        #[arg(num_args = 0..)]
+        ids: Vec<String>,
 
         /// New URL
         #[arg(long)]
@@ -307,34 +309,168 @@ pub fn handle_args(
         }
 
         Some(Commands::Update {
-            id,
+            ids,
             url,
             tag,
             title,
             comment,
             immutable,
         }) => {
-            let url_ref = url.as_deref();
-            let title_str = title.as_deref();
-            let tags = tag.map(|v| v.join(","));
-            let tags_ref = tags.as_deref();
-            let desc_ref = comment.as_deref();
+            // Check if any edit options are provided
+            let has_edit_options = url.is_some()
+                || tag.is_some()
+                || title.is_some()
+                || comment.is_some()
+                || immutable.is_some();
 
-            match db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable) {
-                Ok(()) => {
-                    eprintln!("Updated bookmark at index {}", id);
+            if ids.is_empty() {
+                eprintln!("Error: No bookmark IDs specified");
+                eprintln!("Usage: bukurs update <ID|RANGE|*> [OPTIONS]");
+                eprintln!("Examples:");
+                eprintln!("  bukurs update 5              # Refresh metadata for bookmark 5");
+                eprintln!("  bukurs update 1-10           # Refresh metadata for bookmarks 1-10");
+                eprintln!("  bukurs update \"*\"            # Refresh all bookmarks");
+                eprintln!("  bukurs update 5 --title \"New Title\"  # Update specific field");
+                return Err("No bookmark IDs specified".into());
+            }
+
+            if has_edit_options {
+                // Original behavior: update specific fields for single bookmark
+                if ids.len() != 1 {
+                    eprintln!("Error: Field updates only support a single bookmark ID");
+                    return Err("Multiple IDs not supported with field updates".into());
                 }
-                Err(e) => {
-                    if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                        if err.extended_code == 2067 {
-                            // UNIQUE constraint
-                            eprintln!("Error: Another bookmark with this URL already exists");
-                            if let Some(new_url) = url {
-                                eprintln!("URL: {}", new_url);
+
+                let id: usize = ids[0].parse().map_err(|_| {
+                    eprintln!("Error: Invalid bookmark ID: {}", ids[0]);
+                    "Invalid bookmark ID"
+                })?;
+
+                let url_ref = url.as_deref();
+                let title_str = title.as_deref();
+                let tags = tag.map(|v| v.join(","));
+                let tags_ref = tags.as_deref();
+                let desc_ref = comment.as_deref();
+
+                match db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable) {
+                    Ok(()) => {
+                        eprintln!("Updated bookmark at index {}", id);
+                    }
+                    Err(e) => {
+                        if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                            if err.extended_code == 2067 {
+                                // UNIQUE constraint
+                                eprintln!("Error: Another bookmark with this URL already exists");
+                                if let Some(new_url) = url {
+                                    eprintln!("URL: {}", new_url);
+                                }
                             }
                         }
+                        return Err(e.into());
                     }
-                    return Err(e.into());
+                }
+            } else {
+                // New behavior: refresh metadata from web
+                use indicatif::{ProgressBar, ProgressStyle};
+
+                // Parse IDs/ranges
+                let operation = operations::prepare_print(&ids, db)?;
+                let bookmarks = operation.bookmarks;
+
+                if bookmarks.is_empty() {
+                    eprintln!("No bookmarks found");
+                    return Ok(());
+                }
+
+                eprintln!("Refreshing metadata for {} bookmark(s)...", bookmarks.len());
+
+                // Create progress bar
+                let pb = ProgressBar::new(bookmarks.len() as u64);
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template("{msg}\n[{bar:40.cyan/blue}] {pos}/{len}")
+                        .unwrap()
+                        .progress_chars("=>-"),
+                );
+
+                let mut success_count = 0;
+                let mut failed_count = 0;
+                let mut failed_ids: Vec<usize> = Vec::new();
+
+                for bookmark in &bookmarks {
+                    // Update progress message with current URL
+                    let url_display = if bookmark.url.len() > 60 {
+                        format!("{}...", &bookmark.url[..57])
+                    } else {
+                        bookmark.url.clone()
+                    };
+                    pb.set_message(format!("Fetching: {}", url_display));
+
+                    // Fetch metadata
+                    match fetch::fetch_data(&bookmark.url, Some(&config.user_agent)) {
+                        Ok(fetch_result) => {
+                            // Update bookmark with fetched metadata
+                            let new_title = if !fetch_result.title.is_empty() {
+                                Some(fetch_result.title.as_str())
+                            } else {
+                                None
+                            };
+
+                            let new_desc = if !fetch_result.desc.is_empty() {
+                                Some(fetch_result.desc.as_str())
+                            } else {
+                                None
+                            };
+
+                            // Keep existing tags, only update title and description
+                            match db.update_rec(
+                                bookmark.id,
+                                None, // Don't change URL
+                                new_title,
+                                None, // Don't change tags
+                                new_desc,
+                                None, // Don't change immutable flag
+                            ) {
+                                Ok(()) => success_count += 1,
+                                Err(_) => {
+                                    failed_count += 1;
+                                    failed_ids.push(bookmark.id);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            failed_count += 1;
+                            failed_ids.push(bookmark.id);
+                        }
+                    }
+                    pb.inc(1);
+                }
+
+                pb.finish_with_message("Completed");
+                eprintln!(); // Add blank line after progress bar
+
+                // Display summary
+                if success_count > 0 {
+                    eprintln!("✓ Successfully refreshed {} bookmark(s)", success_count);
+                }
+                if failed_count > 0 {
+                    eprintln!("✗ Failed to refresh {} bookmark(s)", failed_count);
+                    eprintln!(
+                        "   Failed IDs: {}",
+                        failed_ids
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    eprintln!(
+                        "   To retry: bukurs update {}",
+                        failed_ids
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
                 }
             }
         }
