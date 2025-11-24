@@ -222,8 +222,12 @@ pub enum Commands {
         id: Option<usize>,
     },
 
-    /// Undo last operation
-    Undo,
+    /// Undo last operation(s)
+    Undo {
+        /// Number of operations to undo (default: 1)
+        #[arg(default_value = "1")]
+        count: usize,
+    },
 }
 
 pub fn handle_args(
@@ -876,11 +880,44 @@ pub fn handle_args(
             }
         }
 
-        Some(Commands::Undo) => {
-            if let Some(op) = db.undo_last()? {
-                eprintln!("Undid last operation: {}", op);
-            } else {
-                eprintln!("Nothing to undo.");
+        Some(Commands::Undo { count }) => {
+            if count == 0 {
+                eprintln!("Error: Count must be at least 1");
+                return Err("Invalid count".into());
+            }
+
+            let mut undone_count = 0;
+            let mut operations = Vec::new();
+
+            for i in 0..count {
+                match db.undo_last()? {
+                    Some(op) => {
+                        undone_count += 1;
+                        operations.push(op);
+                    }
+                    None => {
+                        if i == 0 {
+                            eprintln!("Nothing to undo.");
+                        } else {
+                            eprintln!(
+                                "No more operations to undo (undid {} operation(s)).",
+                                undone_count
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if undone_count > 0 {
+                if undone_count == 1 {
+                    eprintln!("✓ Undid last operation: {}", operations[0]);
+                } else {
+                    eprintln!("✓ Undid {} operations:", undone_count);
+                    for (i, op) in operations.iter().enumerate() {
+                        eprintln!("  {}. {}", i + 1, op);
+                    }
+                }
             }
         }
 
@@ -1268,7 +1305,21 @@ mod tests {
     #[test]
     fn test_undo_command() {
         let cli = parse_args_ok("undo");
-        assert!(matches!(cli.command, Some(Commands::Undo)));
+        assert!(matches!(cli.command, Some(Commands::Undo { .. })));
+
+        if let Some(Commands::Undo { count }) = cli.command {
+            assert_eq!(count, 1); // Default value
+        }
+    }
+
+    #[test]
+    fn test_undo_command_with_count() {
+        let cli = parse_args_ok("undo 100");
+        assert!(matches!(cli.command, Some(Commands::Undo { .. })));
+
+        if let Some(Commands::Undo { count }) = cli.command {
+            assert_eq!(count, 100);
+        }
     }
 
     // Combined flag tests
