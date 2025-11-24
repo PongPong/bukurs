@@ -133,10 +133,6 @@ pub enum Commands {
         ///    7         => URL + Title + Tags (1 | 2 | 4)
         #[arg(short, long)]
         columns: Option<u8>,
-
-        /// JSON formatted output
-        #[arg(short, long)]
-        json: bool,
     },
 
     /// Search bookmarks
@@ -546,11 +542,7 @@ pub fn handle_args(
             }
         }
 
-        Some(Commands::Print {
-            ids,
-            columns: _,
-            json: _,
-        }) => {
+        Some(Commands::Print { ids, columns: _ }) => {
             // Use the prepare_print operation (reuses DeleteMode logic)
             let operation = operations::prepare_print(&ids, db)?;
 
@@ -1076,7 +1068,6 @@ mod tests {
     #[case("print 1")]
     #[case("print 1 2 3")]
     #[case("print --columns 5")]
-    #[case("print --json")]
     fn test_print_command(#[case] args: &str) {
         let cli = parse_args_ok(args);
         assert!(matches!(cli.command, Some(Commands::Print { .. })));
