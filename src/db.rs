@@ -34,6 +34,67 @@ impl BukuDb {
             [],
         )?;
 
+        // Create FTS5 virtual table for fast full-text search
+        // Using a regular FTS5 table (not content-less) for simplicity and reliability
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
+                url,
+                metadata,
+                tags,
+                desc
+            )",
+            [],
+        )?;
+
+        if cfg!(debug_assertions) {
+            // Drop existing triggers if they exist (to handle upgrades)
+            conn.execute("DROP TRIGGER IF EXISTS bookmarks_ai", [])?;
+            conn.execute("DROP TRIGGER IF EXISTS bookmarks_au", [])?;
+            conn.execute("DROP TRIGGER IF EXISTS bookmarks_ad", [])?;
+        }
+
+        // Trigger to keep FTS5 table in sync on INSERT
+        conn.execute(
+            "CREATE TRIGGER bookmarks_ai AFTER INSERT ON bookmarks BEGIN
+                INSERT INTO bookmarks_fts(rowid, url, metadata, tags, desc)
+                VALUES (new.id, new.URL, new.metadata, new.tags, new.desc);
+            END",
+            [],
+        )?;
+
+        // Trigger to keep FTS5 table in sync on UPDATE
+        conn.execute(
+            "CREATE TRIGGER bookmarks_au AFTER UPDATE ON bookmarks BEGIN
+                UPDATE bookmarks_fts
+                SET url = new.URL, metadata = new.metadata, tags = new.tags, desc = new.desc
+                WHERE rowid = old.id;
+            END",
+            [],
+        )?;
+
+        // Trigger to keep FTS5 table in sync on DELETE
+        conn.execute(
+            "CREATE TRIGGER bookmarks_ad AFTER DELETE ON bookmarks BEGIN
+                DELETE FROM bookmarks_fts WHERE rowid = old.id;
+            END",
+            [],
+        )?;
+
+        // Populate FTS5 table if it's empty but bookmarks exist (migration)
+        let fts_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM bookmarks_fts", [], |row| row.get(0))?;
+        let bookmarks_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
+
+        if fts_count == 0 && bookmarks_count > 0 {
+            // Migrate existing bookmarks to FTS5
+            conn.execute(
+                "INSERT INTO bookmarks_fts(rowid, url, metadata, tags, desc)
+                SELECT id, URL, metadata, tags, desc FROM bookmarks",
+                [],
+            )?;
+        }
+
         Ok(BukuDb { conn })
     }
 
@@ -254,20 +315,11 @@ impl BukuDb {
         &self,
         keywords: &[String],
         any: bool,
-        deep: bool,
+        _deep: bool, // Deep is implicit with FTS5
         regex: bool,
     ) -> Result<Vec<Bookmark>> {
-        let mut query = "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE ".to_string();
-        let mut params: Vec<String> = Vec::new();
-        let mut conditions = Vec::new();
-
+        // Handle regex search separately (fallback to old method)
         if regex {
-            // SQLite doesn't support REGEXP by default without extension, but we can try or fallback to LIKE
-            // For now, let's assume we handle regex in Rust or use LIKE if simple
-            // Actually, rusqlite allows defining functions. We should define REGEXP if we want to support it fully.
-            // But for this port, let's start with LIKE for non-regex search.
-            // If regex is true, we might need to fetch all and filter in Rust if we don't add the function.
-            // Let's fetch all and filter in Rust for regex for simplicity in this iteration.
             let all_recs = self.get_rec_all()?;
             let re = regex::Regex::new(&keywords[0])
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -284,55 +336,62 @@ impl BukuDb {
             return Ok(filtered);
         }
 
-        for (i, kw) in keywords.iter().enumerate() {
-            let param_name = format!("?{}", i + 1);
-            let term = if deep {
-                format!("%{}%", kw)
-            } else {
-                // Default to substring match for now as per 'deep' description in help implies non-deep is word match?
-                // Buku help says: --deep match substrings ('pen' matches 'opens')
-                // So non-deep means word match? Or exact match?
-                // Python buku uses LIKE %kw% by default for many things unless specified otherwise.
-                // Let's stick to %kw% for now as it's most useful.
-                format!("%{}%", kw)
-            };
-
-            // Simple search across all fields
-            conditions.push(format!(
-                "(URL LIKE {0} OR metadata LIKE {0} OR tags LIKE {0} OR desc LIKE {0})",
-                param_name
-            ));
-            params.push(term);
-        }
-
-        if conditions.is_empty() {
+        // No keywords - return all
+        if keywords.is_empty() {
             return self.get_rec_all();
         }
 
-        let join_op = if any { " OR " } else { " AND " };
-        query.push_str(&conditions.join(join_op));
+        // Build FTS5 query
+        let query = if keywords.len() == 1
+            && (keywords[0].contains('"')
+                || keywords[0].contains(" OR ")
+                || keywords[0].contains(" AND "))
+        {
+            // User provided FTS5 query syntax - use as is
+            keywords[0].clone()
+        } else {
+            // Simple keywords - join based on any/all flag
+            let join_op = if any { " OR " } else { " AND " };
+            keywords.join(join_op)
+        };
 
-        let mut stmt = self.conn.prepare(&query)?;
-        // rusqlite params need to be &dyn ToSql.
-        // We need to convert params to that.
-        let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        // Query FTS5 table to get matching bookmark IDs (ranked by relevance)
+        let mut stmt = self.conn.prepare(
+            "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH ?1 ORDER BY rank",
+        )?;
 
-        let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok(Bookmark::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })?;
+        let ids: Vec<usize> = stmt
+            .query_map([&query], |row| row.get::<_, i64>(0).map(|id| id as usize))?
+            .collect::<Result<Vec<_>>>()?;
 
-        let mut records = Vec::new();
-        for row in rows {
-            records.push(row?);
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(records)
+
+        // Fetch full bookmark data for matching IDs
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query_str = format!(
+            "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = self.conn.prepare(&query_str)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+
+        let bookmarks = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(Bookmark::new(
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(bookmarks)
     }
 
     pub fn search_tags(&self, tags: &[String]) -> Result<Vec<Bookmark>> {
