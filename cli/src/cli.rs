@@ -371,7 +371,7 @@ pub fn handle_args(
                 }
             } else {
                 // New behavior: refresh metadata from web
-                use indicatif::{ProgressBar, ProgressStyle};
+                use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
                 // Parse IDs/ranges
                 let operation = operations::prepare_print(&ids, db)?;
@@ -384,27 +384,39 @@ pub fn handle_args(
 
                 eprintln!("Refreshing metadata for {} bookmark(s)...", bookmarks.len());
 
-                // Create progress bar
-                let pb = ProgressBar::new(bookmarks.len() as u64);
+                // Create multi-progress for overall + per-URL progress
+                let multi = MultiProgress::new();
+
+                // Overall progress bar
+                let pb = multi.add(ProgressBar::new(bookmarks.len() as u64));
                 pb.set_style(
                     ProgressStyle::default_bar()
-                        .template("{msg}\n[{bar:40.cyan/blue}] {pos}/{len}")
+                        .template("{msg} [{bar:40.cyan/blue}] {pos}/{len}")
                         .unwrap()
                         .progress_chars("=>-"),
                 );
+                pb.set_message("Overall progress");
 
                 let mut success_count = 0;
                 let mut failed_count = 0;
                 let mut failed_ids: Vec<usize> = Vec::new();
 
                 for bookmark in &bookmarks {
-                    // Update progress message with current URL
+                    // Create spinner for current URL
+                    let spinner = multi.insert_before(&pb, ProgressBar::new_spinner());
+                    spinner.set_style(
+                        ProgressStyle::default_spinner()
+                            .template("{spinner:.green} {msg}")
+                            .unwrap(),
+                    );
+
                     let url_display = if bookmark.url.len() > 60 {
                         format!("{}...", &bookmark.url[..57])
                     } else {
                         bookmark.url.clone()
                     };
-                    pb.set_message(format!("Fetching: {}", url_display));
+                    spinner.set_message(format!("Fetching: {}", url_display));
+                    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
                     // Fetch metadata
                     match fetch::fetch_data(&bookmark.url, Some(&config.user_agent)) {
@@ -431,23 +443,40 @@ pub fn handle_args(
                                 new_desc,
                                 None, // Don't change immutable flag
                             ) {
-                                Ok(()) => success_count += 1,
+                                Ok(()) => {
+                                    success_count += 1;
+                                    spinner.finish_with_message(format!("✓ {}", url_display));
+                                }
                                 Err(_) => {
                                     failed_count += 1;
                                     failed_ids.push(bookmark.id);
+                                    spinner.finish_with_message(format!(
+                                        "✗ {} (DB error)",
+                                        url_display
+                                    ));
                                 }
                             }
                         }
-                        Err(_) => {
+                        Err(e) => {
                             failed_count += 1;
                             failed_ids.push(bookmark.id);
+                            let error_msg = if e.to_string().contains("403") {
+                                "blocked"
+                            } else if e.to_string().contains("timeout")
+                                || e.to_string().contains("dns")
+                            {
+                                "network error"
+                            } else {
+                                "fetch error"
+                            };
+                            spinner
+                                .finish_with_message(format!("✗ {} ({})", url_display, error_msg));
                         }
                     }
                     pb.inc(1);
                 }
 
-                pb.finish_with_message("Completed");
-                eprintln!(); // Add blank line after progress bar
+                pb.finish_and_clear();
 
                 // Display summary
                 if success_count > 0 {

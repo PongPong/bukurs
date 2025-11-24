@@ -34,10 +34,7 @@ impl BukuDb {
             [],
         )?;
         if cfg!(debug_assertions) {
-            conn.execute(
-                "DROP TABLE IF EXISTS bookmarks_fts",
-                [],
-            )?;
+            conn.execute("DROP TABLE IF EXISTS bookmarks_fts", [])?;
         }
 
         // Create FTS5 virtual table for fast full-text search
