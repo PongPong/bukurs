@@ -55,7 +55,7 @@ impl BukuDb {
 
         // Trigger to keep FTS5 table in sync on INSERT
         conn.execute(
-            "CREATE TRIGGER bookmarks_ai AFTER INSERT ON bookmarks BEGIN
+            "CREATE TRIGGER IF NOT EXISTS bookmarks_ai AFTER INSERT ON bookmarks BEGIN
                 INSERT INTO bookmarks_fts(rowid, url, metadata, tags, desc)
                 VALUES (new.id, new.URL, new.metadata, new.tags, new.desc);
             END",
@@ -64,7 +64,7 @@ impl BukuDb {
 
         // Trigger to keep FTS5 table in sync on UPDATE
         conn.execute(
-            "CREATE TRIGGER bookmarks_au AFTER UPDATE ON bookmarks BEGIN
+            "CREATE TRIGGER IF NOT EXISTS bookmarks_au AFTER UPDATE ON bookmarks BEGIN
                 UPDATE bookmarks_fts
                 SET url = new.URL, metadata = new.metadata, tags = new.tags, desc = new.desc
                 WHERE rowid = old.id;
@@ -74,7 +74,7 @@ impl BukuDb {
 
         // Trigger to keep FTS5 table in sync on DELETE
         conn.execute(
-            "CREATE TRIGGER bookmarks_ad AFTER DELETE ON bookmarks BEGIN
+            "CREATE TRIGGER IF NOT EXISTS bookmarks_ad AFTER DELETE ON bookmarks BEGIN
                 DELETE FROM bookmarks_fts WHERE rowid = old.id;
             END",
             [],
