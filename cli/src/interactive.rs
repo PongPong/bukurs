@@ -1,4 +1,4 @@
-use crate::db::BukuDb;
+use bukurs::db::BukuDb;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::error::Error;

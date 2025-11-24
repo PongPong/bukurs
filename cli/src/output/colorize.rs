@@ -1,5 +1,5 @@
-use crate::models::bookmark::Bookmark;
-use crate::tags::parse_tags;
+use bukurs::models::bookmark::Bookmark;
+use bukurs::tags::parse_tags;
 use owo_colors::OwoColorize;
 
 pub trait Colorize {

@@ -1,7 +1,8 @@
-use crate::db::BukuDb;
 use crate::format::OutputFormat;
-use crate::models::errors::AppError;
-use crate::{browser, crypto, fetch, import_export, interactive, operations};
+use crate::interactive;
+use bukurs::db::BukuDb;
+use bukurs::models::errors::AppError;
+use bukurs::{browser, crypto, fetch, import_export, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -723,7 +724,7 @@ pub fn handle_args(
             };
 
             let records = db.get_rec_all()?;
-            if let Some(selected) = crate::fuzzy::run_fuzzy_search(&records, query)? {
+            if let Some(selected) = bukurs::fuzzy::run_fuzzy_search(&records, query)? {
                 if cli.open {
                     eprintln!("Opening: {}", selected.url);
                     browser::open_url(&selected.url)?;

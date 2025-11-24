@@ -1,19 +1,10 @@
-mod browser;
 mod cli;
-mod crypto;
-mod db;
 mod editor;
-mod fetch;
 mod format;
-mod fuzzy;
-mod import_export;
 mod interactive;
-mod models;
-mod operations;
 mod output;
-mod tags;
-mod utils;
 
+use bukurs::{db, utils};
 use clap::Parser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

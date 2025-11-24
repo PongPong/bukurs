@@ -1,4 +1,4 @@
-use crate::models::bookmark::Bookmark;
+use bukurs::models::bookmark::Bookmark;
 use std::env;
 use std::fs;
 use std::io::Write;

@@ -1,5 +1,5 @@
 use crate::format::traits::BookmarkFormat;
-use crate::models::bookmark::Bookmark;
+use bukurs::models::bookmark::Bookmark;
 
 pub struct YamlBookmark<'a>(pub &'a Bookmark);
 

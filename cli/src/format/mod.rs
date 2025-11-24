@@ -35,7 +35,7 @@ impl OutputFormat {
 
     pub fn print_bookmarks(
         self: Self,
-        records: &Vec<crate::models::bookmark::Bookmark>,
+        records: &Vec<bukurs::models::bookmark::Bookmark>,
         no_color: bool,
     ) {
         match self {

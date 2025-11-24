@@ -1,0 +1,12 @@
+[package]
+name = "bukurs-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bukurs = { path = "../lib" }
+criterion = "0.5"
+
+[[bench]]
+name = "benchmark"
+harness = false
