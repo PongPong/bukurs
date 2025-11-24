@@ -21,17 +21,6 @@ impl Bookmark {
             description,
         }
     }
-
-    /// Create from database tuple format
-    pub fn from_tuple(id: usize, tuple: (String, String, String, String)) -> Self {
-        Self {
-            id,
-            url: tuple.0,
-            title: tuple.1,
-            tags: tuple.2,
-            description: tuple.3,
-        }
-    }
 }
 
 #[cfg(test)]

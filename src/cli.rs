@@ -181,6 +181,21 @@ pub enum Commands {
         file: String,
     },
 
+    /// Import bookmarks from browser profiles
+    ImportBrowsers {
+        /// List available browser profiles without importing
+        #[arg(short, long)]
+        list: bool,
+
+        /// Import from all detected browsers
+        #[arg(short, long)]
+        all: bool,
+
+        /// Specific browsers to import from (comma-separated: chrome,firefox,edge,safari)
+        #[arg(short, long, value_delimiter = ',')]
+        browsers: Option<Vec<String>>,
+    },
+
     /// Export bookmarks to file
     Export {
         /// File path to export to
@@ -521,8 +536,61 @@ pub fn handle_args(
         }
 
         Some(Commands::Import { file }) => {
-            import_export::import_bookmarks(db, &file)?;
-            eprintln!("Imported bookmarks from {}", file);
+            let count = import_export::import_bookmarks(db, &file)?;
+            eprintln!(
+                "✓ Successfully imported {} bookmark(s) from {}",
+                count, file
+            );
+        }
+
+        Some(Commands::ImportBrowsers {
+            list,
+            all,
+            browsers,
+        }) => {
+            if list {
+                // List detected browsers
+                let profiles = import_export::list_detected_browsers();
+                if profiles.is_empty() {
+                    eprintln!("No browser profiles detected.");
+                } else {
+                    eprintln!("Detected browser profiles:");
+                    for profile in profiles {
+                        eprintln!("  • {}", profile.display_string());
+                    }
+                }
+            } else if all {
+                // Import from all detected browsers
+                eprintln!("Importing from all detected browsers...");
+                match import_export::auto_import_all(db) {
+                    Ok(count) => {
+                        eprintln!("✓ Successfully imported {} total bookmark(s)", count);
+                    }
+                    Err(e) => {
+                        eprintln!("Error during import: {}", e);
+                        return Err(e);
+                    }
+                }
+            } else if let Some(browser_list) = browsers {
+                // Import from specific browsers
+                eprintln!("Importing from selected browsers: {:?}", browser_list);
+                match import_export::import_from_selected_browsers(db, &browser_list) {
+                    Ok(count) => {
+                        eprintln!("✓ Successfully imported {} total bookmark(s)", count);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        return Err(e);
+                    }
+                }
+            } else {
+                eprintln!("Error: Please specify --list, --all, or --browsers");
+                eprintln!("Examples:");
+                eprintln!("  bukurs import-browsers --list");
+                eprintln!("  bukurs import-browsers --all");
+                eprintln!("  bukurs import-browsers --browsers chrome,firefox");
+                return Err("No import option specified".into());
+            }
         }
 
         Some(Commands::Export { file }) => {
