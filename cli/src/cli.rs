@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(long)]
     pub db: Option<PathBuf>,
 
+    /// Optional custom configuration file path
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+
     /// Disable color output
     #[arg(long)]
     pub nc: bool,
@@ -227,6 +231,7 @@ pub fn handle_args(
     cli: Cli,
     db: &BukuDb,
     db_path: &std::path::Path,
+    config: &bukurs::config::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Some(Commands::Add {
@@ -243,7 +248,7 @@ pub fn handle_args(
             }
 
             let fetch_result = if !offline {
-                fetch::fetch_data(&url).unwrap_or(fetch::FetchResult {
+                fetch::fetch_data(&url, Some(&config.user_agent)).unwrap_or(fetch::FetchResult {
                     url: url.clone(),
                     title: "".to_string(),
                     desc: "".to_string(),

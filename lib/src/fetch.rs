@@ -10,8 +10,13 @@ pub struct FetchResult {
     pub keywords: String,
 }
 
-pub fn fetch_data(url: &str) -> Result<FetchResult, Box<dyn Error>> {
-    let client = Client::new();
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+    AppleWebKit/605.1.15 (KHTML, like Gecko) \
+    Version/18.5 Safari/605.1.15";
+
+pub fn fetch_data(url: &str, user_agent: Option<&str>) -> Result<FetchResult, Box<dyn Error>> {
+    let ua = user_agent.unwrap_or(USER_AGENT);
+    let client = Client::builder().user_agent(ua).build()?;
     let resp = client.get(url).send()?;
     let final_url = resp.url().to_string();
     let body = resp.text()?;

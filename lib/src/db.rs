@@ -33,16 +33,23 @@ impl BukuDb {
             )",
             [],
         )?;
+        if cfg!(debug_assertions) {
+            conn.execute(
+                "DROP TABLE IF EXISTS bookmarks_fts",
+                [],
+            )?;
+        }
 
         // Create FTS5 virtual table for fast full-text search
         // Using a regular FTS5 table (not content-less) for simplicity and reliability
         conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
+            r#"CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
                 url,
                 metadata,
                 tags,
-                desc
-            )",
+                desc,
+                tokenize = 'unicode61'
+            )"#,
             [],
         )?;
 

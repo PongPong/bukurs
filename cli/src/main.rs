@@ -4,7 +4,7 @@ mod format;
 mod interactive;
 mod output;
 
-use bukurs::{db, utils};
+use bukurs::{config, db, utils};
 use clap::Parser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,7 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = db::BukuDb::init(&db_path)?;
 
-    cli::handle_args(args, &db, &db_path)?;
+    // Load configuration
+    let cfg = if let Some(config_path) = &args.config {
+        config::Config::load_from_path(config_path)?
+    } else {
+        config::Config::load()
+    };
+
+    cli::handle_args(args, &db, &db_path, &cfg)?;
 
     Ok(())
 }

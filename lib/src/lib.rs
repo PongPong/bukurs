@@ -1,4 +1,5 @@
 pub mod browser;
+pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod fetch;
