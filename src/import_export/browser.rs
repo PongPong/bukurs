@@ -250,8 +250,8 @@ pub struct ChromeImporter;
 
 impl super::import::BookmarkImporter for ChromeImporter {
     fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
-        let json_content = fs::read_to_string(path)?;
-        let chrome_data: ChromeBookmarkFile = serde_json::from_str(&json_content)?;
+        let mut json_content = fs::read(path)?;
+        let chrome_data: ChromeBookmarkFile = simd_json::serde::from_slice(&mut json_content)?;
 
         let mut imported_count = 0;
 
@@ -473,5 +473,97 @@ mod tests {
         assert_eq!(BrowserType::Firefox.display_name(), "Firefox");
         assert_eq!(BrowserType::Edge.display_name(), "Edge");
         assert_eq!(BrowserType::Safari.display_name(), "Safari");
+    }
+
+    #[test]
+    fn test_chrome_import_parsing() {
+        use crate::db::BukuDb;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create a temporary database
+        let db_file = NamedTempFile::new().unwrap();
+        let db = BukuDb::init(db_file.path()).unwrap();
+
+        // Create a sample Chrome bookmark JSON file
+        let mut bookmark_file = NamedTempFile::new().unwrap();
+        let json_content = r#"{
+            "checksum": "e68417696614de65818e666d48227636",
+            "roots": {
+                "bookmark_bar": {
+                    "children": [
+                        {
+                            "date_added": "13245678900000000",
+                            "id": "1",
+                            "name": "Google",
+                            "type": "url",
+                            "url": "https://www.google.com/"
+                        },
+                        {
+                            "children": [
+                                {
+                                    "date_added": "13245678900000000",
+                                    "id": "3",
+                                    "name": "Rust",
+                                    "type": "url",
+                                    "url": "https://www.rust-lang.org/"
+                                }
+                            ],
+                            "date_added": "13245678900000000",
+                            "date_modified": "13245678900000000",
+                            "id": "2",
+                            "name": "Dev",
+                            "type": "folder"
+                        }
+                    ],
+                    "date_added": "13245678900000000",
+                    "date_modified": "13245678900000000",
+                    "id": "1",
+                    "name": "Bookmarks Bar",
+                    "type": "folder"
+                },
+                "other": {
+                    "children": [],
+                    "date_added": "13245678900000000",
+                    "date_modified": "13245678900000000",
+                    "id": "2",
+                    "name": "Other Bookmarks",
+                    "type": "folder"
+                },
+                "synced": {
+                    "children": [],
+                    "date_added": "13245678900000000",
+                    "date_modified": "13245678900000000",
+                    "id": "3",
+                    "name": "Mobile Bookmarks",
+                    "type": "folder"
+                }
+            },
+            "version": 1
+        }"#;
+
+        write!(bookmark_file, "{}", json_content).unwrap();
+
+        // Test import
+        let count = import_from_chrome(&db, bookmark_file.path()).unwrap();
+        assert_eq!(count, 2);
+
+        // Verify bookmarks in DB
+        let bookmarks = db.search(&[], false, false, false).unwrap();
+        assert_eq!(bookmarks.len(), 2);
+
+        let google = bookmarks
+            .iter()
+            .find(|b| b.url == "https://www.google.com/")
+            .unwrap();
+        assert_eq!(google.title, "Google");
+        assert!(google.tags.contains(",bookmark_bar,"));
+
+        let rust = bookmarks
+            .iter()
+            .find(|b| b.url == "https://www.rust-lang.org/")
+            .unwrap();
+        assert_eq!(rust.title, "Rust");
+        assert!(rust.tags.contains(",bookmark_bar,Dev,"));
     }
 }
