@@ -248,12 +248,19 @@ pub fn handle_args(
             }
 
             let fetch_result = if !offline {
-                fetch::fetch_data(&url, Some(&config.user_agent)).unwrap_or(fetch::FetchResult {
-                    url: url.clone(),
-                    title: "".to_string(),
-                    desc: "".to_string(),
-                    keywords: "".to_string(),
-                })
+                match fetch::fetch_data(&url, Some(&config.user_agent)) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to fetch metadata: {}", e);
+                        eprintln!("Continuing with manual entry...");
+                        fetch::FetchResult {
+                            url: url.clone(),
+                            title: "".to_string(),
+                            desc: "".to_string(),
+                            keywords: "".to_string(),
+                        }
+                    }
+                }
             } else {
                 fetch::FetchResult {
                     url: url.clone(),

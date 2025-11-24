@@ -18,6 +18,28 @@ pub fn fetch_data(url: &str, user_agent: Option<&str>) -> Result<FetchResult, Bo
     let ua = user_agent.unwrap_or(USER_AGENT);
     let client = Client::builder().user_agent(ua).build()?;
     let resp = client.get(url).send()?;
+
+    // Check HTTP status code
+    let status = resp.status();
+    if !status.is_success() {
+        // Provide helpful error messages based on status code
+        let error_msg = match status.as_u16() {
+            403 => {
+                "HTTP 403 Forbidden - This is often caused by user-agent blocking.\n\
+                 Try customizing the user-agent in ~/.config/bukurs/config.yml"
+            }
+            401 => {
+                "HTTP 401 Unauthorized - The website requires authentication or is blocking your request.\n\
+                 This might be due to user-agent or other access restrictions."
+            }
+            404 => "HTTP 404 Not Found - The URL does not exist",
+            429 => "HTTP 429 Too Many Requests - You are being rate limited",
+            500..=599 => "HTTP 5xx Server Error - The website is experiencing issues",
+            _ => "HTTP request failed with non-success status",
+        };
+        return Err(format!("{} (Status: {})", error_msg, status).into());
+    }
+
     let final_url = resp.url().to_string();
     let body = resp.text()?;
 
