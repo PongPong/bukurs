@@ -83,7 +83,8 @@ pub enum Commands {
         #[arg(long)]
         url: Option<String>,
 
-        /// New tags (comma-separated)
+        /// Tag operations (supports: +add, -remove, ~old:new, or plain tag to add)
+        /// Examples: +urgent, -archived, ~todo:done
         #[arg(short, long)]
         tag: Option<Vec<String>>,
 
@@ -310,6 +311,8 @@ pub fn handle_args(
             comment,
             immutable,
         }) => {
+            use crate::tag_ops::{apply_tag_operations, parse_tag_operations};
+
             // Check if any edit options are provided
             let has_edit_options = url.is_some()
                 || tag.is_some()
@@ -321,47 +324,82 @@ pub fn handle_args(
                 eprintln!("Error: No bookmark IDs specified");
                 eprintln!("Usage: bukurs update <ID|RANGE|*> [OPTIONS]");
                 eprintln!("Examples:");
-                eprintln!("  bukurs update 5              # Refresh metadata for bookmark 5");
-                eprintln!("  bukurs update 1-10           # Refresh metadata for bookmarks 1-10");
-                eprintln!("  bukurs update \"*\"            # Refresh all bookmarks");
-                eprintln!("  bukurs update 5 --title \"New Title\"  # Update specific field");
+                eprintln!("  bukurs update 5                  # Refresh metadata for bookmark 5");
+                eprintln!(
+                    "  bukurs update 1-10               # Refresh metadata for bookmarks 1-10"
+                );
+                eprintln!("  bukurs update \"*\"                # Refresh all bookmarks");
+                eprintln!("  bukurs update 5 --tag +urgent    # Add 'urgent' tag");
+                eprintln!("  bukurs update 5 --tag -archived  # Remove 'archived' tag");
+                eprintln!("  bukurs update 5 --tag ~todo:done # Replace 'todo' with 'done'");
                 return Err("No bookmark IDs specified".into());
             }
 
             if has_edit_options {
-                // Original behavior: update specific fields for single bookmark
-                if ids.len() != 1 {
-                    eprintln!("Error: Field updates only support a single bookmark ID");
-                    return Err("Multiple IDs not supported with field updates".into());
-                }
+                // Field update mode: update specific fields for bookmark(s)
+                // Parse IDs/ranges
+                let operation = operations::prepare_print(&ids, db)?;
+                let bookmarks = operation.bookmarks;
 
-                let id: usize = ids[0].parse().map_err(|_| {
-                    eprintln!("Error: Invalid bookmark ID: {}", ids[0]);
-                    "Invalid bookmark ID"
-                })?;
+                if bookmarks.is_empty() {
+                    eprintln!("No bookmarks found");
+                    return Ok(());
+                }
 
                 let url_ref = url.as_deref();
                 let title_str = title.as_deref();
-                let tags = tag.map(|v| v.join(","));
-                let tags_ref = tags.as_deref();
                 let desc_ref = comment.as_deref();
 
-                match db.update_rec(id, url_ref, title_str, tags_ref, desc_ref, immutable) {
-                    Ok(()) => {
-                        eprintln!("Updated bookmark at index {}", id);
-                    }
-                    Err(e) => {
-                        if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                            if err.extended_code == 2067 {
-                                // UNIQUE constraint
-                                eprintln!("Error: Another bookmark with this URL already exists");
-                                if let Some(new_url) = url {
-                                    eprintln!("URL: {}", new_url);
+                // Parse tag operations if provided
+                let tag_operations = tag.as_ref().map(|tags| parse_tag_operations(tags));
+
+                let mut success_count = 0;
+                let mut failed_count = 0;
+
+                for bookmark in &bookmarks {
+                    // Apply tag operations to existing tags
+                    let final_tags = if let Some(ref ops) = tag_operations {
+                        let new_tags = apply_tag_operations(&bookmark.tags, ops);
+                        Some(new_tags)
+                    } else {
+                        None
+                    };
+
+                    let tags_ref = final_tags.as_deref();
+
+                    match db.update_rec(
+                        bookmark.id,
+                        url_ref,
+                        title_str,
+                        tags_ref,
+                        desc_ref,
+                        immutable,
+                    ) {
+                        Ok(()) => {
+                            success_count += 1;
+                            eprintln!("✓ Updated bookmark {}", bookmark.id);
+                        }
+                        Err(e) => {
+                            failed_count += 1;
+                            if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                                if err.extended_code == 2067 {
+                                    eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
+                                } else {
+                                    eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
                                 }
+                            } else {
+                                eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
                             }
                         }
-                        return Err(e.into());
                     }
+                }
+
+                eprintln!();
+                if success_count > 0 {
+                    eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
+                }
+                if failed_count > 0 {
+                    eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
                 }
             } else {
                 // New behavior: refresh metadata from web

@@ -4,6 +4,7 @@ mod fetch_ui;
 mod format;
 mod interactive;
 mod output;
+mod tag_ops;
 
 use bukurs::{config, db, utils};
 use clap::Parser;
