@@ -1,10 +1,7 @@
 use crate::{
     format::{
-        json::JsonBookmark, //
-        toml::TomlBookmark,
-        toon::ToonBookmark,
-        traits::BookmarkFormat,
-        yaml::YamlBookmark,
+        json::JsonBookmark, plain::PlainBookmark, toml::TomlBookmark, toon::ToonBookmark,
+        traits::BookmarkFormat, yaml::YamlBookmark,
     },
     output::colorize::{Colorize, ColorizeBookmark},
 };
@@ -16,7 +13,7 @@ pub mod toon;
 pub mod traits;
 pub mod yaml;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum OutputFormat {
     Json,
     Yaml,
@@ -26,14 +23,13 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    pub fn from_str(format: &str) -> Option<OutputFormat> {
-        match format.to_lowercase().as_str() {
-            "json" => Some(OutputFormat::Json),
-            "yaml" | "yml" => Some(OutputFormat::Yaml),
-            "toml" => Some(OutputFormat::Toml),
-            "toon" => Some(OutputFormat::Toon),
-            "colored" | "color" | "plain" => Some(OutputFormat::Colored),
-            _ => None,
+    pub fn from_string(format: &str) -> Self {
+        match format {
+            "json" => OutputFormat::Json,
+            "yaml" | "yml" => OutputFormat::Yaml,
+            "toml" => OutputFormat::Toml,
+            "toon" => OutputFormat::Toon,
+            _ => OutputFormat::Colored,
         }
     }
 
@@ -66,8 +62,7 @@ impl OutputFormat {
             OutputFormat::Colored => {
                 for b in records {
                     if no_color {
-                        // Plain text output
-                        println!("{}", b.to_string());
+                        println!("{}", PlainBookmark(b).to_string());
                     } else {
                         println!("{}", ColorizeBookmark(b).to_colored());
                     }

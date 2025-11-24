@@ -322,7 +322,7 @@ pub fn handle_args(
             // Handle empty results
             if operation.bookmarks.is_empty() {
                 match operation.mode {
-                    operations::DeleteMode::ByKeywords(_) => {
+                    operations::SelectionMode::ByKeywords(_) => {
                         eprintln!("No bookmarks found matching the search criteria.");
                     }
                     _ => {
@@ -334,14 +334,14 @@ pub fn handle_args(
 
             // Display bookmarks to be deleted (UI concern)
             match &operation.mode {
-                operations::DeleteMode::All => {
+                operations::SelectionMode::All => {
                     eprintln!("⚠️  DELETE ALL BOOKMARKS:");
                 }
-                operations::DeleteMode::ByKeywords(keywords) => {
+                operations::SelectionMode::ByKeywords(keywords) => {
                     eprintln!("Searching for bookmarks matching: {:?}", keywords);
                     eprintln!("Bookmarks matching search criteria:");
                 }
-                operations::DeleteMode::ByIds(_) => {
+                operations::SelectionMode::ByIds(_) => {
                     eprintln!("Bookmarks to be deleted:");
                 }
             }
@@ -357,7 +357,7 @@ pub fn handle_args(
                 use std::io::{self, Write};
 
                 let prompt = match operation.mode {
-                    operations::DeleteMode::All => {
+                    operations::SelectionMode::All => {
                         format!(
                             "\n⚠️  DELETE ALL {} bookmark(s)? [y/N]: ",
                             operation.bookmarks.len()
@@ -390,13 +390,28 @@ pub fn handle_args(
         }
 
         Some(Commands::Print {
-            ids: _,
+            ids,
             columns: _,
             json: _,
         }) => {
-            let mut records = db.get_rec_all()?;
+            // Use the prepare_print operation (reuses DeleteMode logic)
+            let operation = operations::prepare_print(&ids, db)?;
+
+            // Handle empty results
+            if operation.bookmarks.is_empty() {
+                match operation.mode {
+                    operations::SelectionMode::ByKeywords(_) => {
+                        eprintln!("No bookmarks found matching the search criteria.");
+                    }
+                    _ => {
+                        eprintln!("No bookmarks to display.");
+                    }
+                }
+                return Ok(());
+            }
 
             // Apply limit if specified
+            let mut records = operation.bookmarks;
             if let Some(limit) = cli.limit {
                 let start = records.len().saturating_sub(limit);
                 records = records.into_iter().skip(start).collect();
@@ -404,9 +419,9 @@ pub fn handle_args(
 
             let format: OutputFormat = cli
                 .format
-                .as_deref() // Option<&str>
-                .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
-                .unwrap_or(OutputFormat::Colored); // default
+                .as_deref()
+                .and_then(|s| Some(OutputFormat::from_string(s)))
+                .unwrap_or(OutputFormat::Colored);
 
             format.print_bookmarks(&records, cli.nc);
         }
@@ -431,7 +446,7 @@ pub fn handle_args(
             let format: OutputFormat = cli
                 .format
                 .as_deref() // Option<&str>
-                .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                .and_then(|s| Some(OutputFormat::from_string(s)))
                 .unwrap_or(OutputFormat::Colored); // default
 
             format.print_bookmarks(&records, cli.nc);
@@ -457,7 +472,7 @@ pub fn handle_args(
                 let format: OutputFormat = cli
                     .format
                     .as_deref() // Option<&str>
-                    .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                    .and_then(|s| Some(OutputFormat::from_string(s)))
                     .unwrap_or(OutputFormat::Colored); // default
                 format.print_bookmarks(&records, cli.nc);
             }
@@ -610,7 +625,7 @@ pub fn handle_args(
                     let format: OutputFormat = cli
                         .format
                         .as_deref() // Option<&str>
-                        .and_then(|s| OutputFormat::from_str(s)) // Option<OutputFormat>
+                        .and_then(|s| Some(OutputFormat::from_string(s)))
                         .unwrap_or(OutputFormat::Colored); // default
                                                            // Display selected bookmark
                     let selected = vec![selected];

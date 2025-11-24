@@ -1,24 +1,24 @@
 use crate::db::BukuDb;
 use crate::models::bookmark::Bookmark;
 
-/// Deletion modes supported by the application
+/// Selection modes supported by the application
 #[derive(Debug, Clone, PartialEq)]
-pub enum DeleteMode {
-    /// Delete all bookmarks
+pub enum SelectionMode {
+    /// Select all bookmarks
     All,
-    /// Delete bookmarks by specific IDs
+    /// Select bookmarks by specific IDs
     ByIds(Vec<usize>),
-    /// Delete bookmarks matching keywords
+    /// Select bookmarks matching keywords
     ByKeywords(Vec<String>),
 }
 
-/// Represents a prepared delete operation with all necessary data
-pub struct DeleteOperation {
-    /// The deletion mode
-    pub mode: DeleteMode,
-    /// IDs that will be deleted
-    pub ids_to_delete: Vec<usize>,
-    /// Bookmarks that will be deleted
+/// Represents a prepared bookmark selection with all necessary data
+pub struct BookmarkSelection {
+    /// The selection mode
+    pub mode: SelectionMode,
+    /// IDs that were selected
+    pub selected_ids: Vec<usize>,
+    /// Bookmarks that were selected
     pub bookmarks: Vec<Bookmark>,
 }
 
@@ -106,52 +106,80 @@ pub fn parse_ranges(
     Ok(ids)
 }
 
-/// Prepare a delete operation by analyzing inputs and fetching affected bookmarks
+/// Resolve bookmarks by analyzing inputs and fetching matching bookmarks
 /// This is interface-agnostic and doesn't prompt or print
-pub fn prepare_delete(
+/// Can be used for delete, print, or any other operation that needs to select bookmarks
+pub fn resolve_bookmarks(
     inputs: &[String],
     db: &BukuDb,
-) -> Result<DeleteOperation, Box<dyn std::error::Error>> {
-    // Determine deletion mode and get IDs
-    let (mode, ids_to_delete) = if inputs.is_empty() {
-        // No args → delete all bookmarks
+) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+    // Determine selection mode and get IDs
+    let (mode, selected_ids) = if inputs.is_empty() {
+        // No args → select all bookmarks
         let all_records = db.get_rec_all()?;
         let all_ids: Vec<usize> = all_records.iter().map(|b| b.id).collect();
-        (DeleteMode::All, all_ids)
+        (SelectionMode::All, all_ids)
     } else if inputs.iter().all(|s| is_id_or_range(s)) {
-        // All inputs look like IDs/ranges → ID-based deletion
+        // All inputs are IDs/ranges → select by IDs
         let ids = parse_ranges(inputs, db)?;
-        (DeleteMode::ByIds(ids.clone()), ids)
+        (SelectionMode::ByIds(ids.clone()), ids)
     } else {
-        // Otherwise → keyword-based deletion
-        let records = db.search(inputs, true, false, false)?;
-        let found_ids: Vec<usize> = records.iter().map(|b| b.id).collect();
-        (DeleteMode::ByKeywords(inputs.to_vec()), found_ids)
+        // Inputs are keywords → search for matching bookmarks
+        let all_bookmarks = db.get_rec_all()?;
+        let matching: Vec<usize> = all_bookmarks
+            .iter()
+            .filter(|b| {
+                inputs.iter().any(|keyword| {
+                    let kw_lower = keyword.to_lowercase();
+                    b.title.to_lowercase().contains(&kw_lower)
+                        || b.description.to_lowercase().contains(&kw_lower)
+                        || b.tags.to_lowercase().contains(&kw_lower)
+                        || b.url.to_lowercase().contains(&kw_lower)
+                })
+            })
+            .map(|b| b.id)
+            .collect();
+
+        (SelectionMode::ByKeywords(inputs.to_vec()), matching)
     };
 
-    // Fetch bookmark details for the IDs
-    let mut bookmarks = Vec::new();
-    for id in &ids_to_delete {
-        if let Some(bookmark) = db.get_rec_by_id(*id)? {
-            bookmarks.push(bookmark);
-        }
-    }
+    // Fetch the actual bookmark data
+    let bookmarks: Vec<Bookmark> = selected_ids
+        .iter()
+        .filter_map(|id| db.get_rec_by_id(*id).ok().flatten())
+        .collect();
 
-    Ok(DeleteOperation {
+    Ok(BookmarkSelection {
         mode,
-        ids_to_delete,
+        selected_ids,
         bookmarks,
     })
+}
+
+/// Prepare a delete operation (wrapper around resolve_bookmarks for backward compatibility)
+pub fn prepare_delete(
+    ids: &[String],
+    db: &BukuDb,
+) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+    resolve_bookmarks(ids, db)
+}
+
+/// Prepare a print operation (wrapper around resolve_bookmarks)
+pub fn prepare_print(
+    ids: &[String],
+    db: &BukuDb,
+) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+    resolve_bookmarks(ids, db)
 }
 
 /// Execute a delete operation
 /// Returns the number of bookmarks deleted
 pub fn execute_delete(
-    operation: &DeleteOperation,
+    operation: &BookmarkSelection,
     db: &BukuDb,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     // Delete in reverse order to maintain indices
-    let mut sorted_ids = operation.ids_to_delete.clone();
+    let mut sorted_ids = operation.selected_ids.clone();
     sorted_ids.sort_by(|a, b| b.cmp(a)); // Sort descending
 
     for id in &sorted_ids {
@@ -208,9 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_mode_equality() {
-        assert_eq!(DeleteMode::All, DeleteMode::All);
-        assert_eq!(DeleteMode::ByIds(vec![1, 2]), DeleteMode::ByIds(vec![1, 2]));
-        assert_ne!(DeleteMode::All, DeleteMode::ByIds(vec![1]));
+    fn test_selection_mode_equality() {
+        assert_eq!(SelectionMode::All, SelectionMode::All);
+        assert_eq!(
+            SelectionMode::ByIds(vec![1, 2]),
+            SelectionMode::ByIds(vec![1, 2])
+        );
+        assert_ne!(SelectionMode::All, SelectionMode::ByIds(vec![1]));
     }
 }

@@ -11,6 +11,7 @@ mod interactive;
 mod models;
 mod operations;
 mod output;
+mod tags;
 mod utils;
 
 use clap::Parser;
