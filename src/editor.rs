@@ -69,6 +69,47 @@ pub fn edit_bookmark(bookmark: &Bookmark) -> Result<Bookmark> {
     parse_edited_bookmark(&edited_content, bookmark.id)
 }
 
+/// Edit a new bookmark template to create a bookmark
+pub fn edit_new_bookmark() -> Result<Bookmark> {
+    // Get editor from environment, default to vim
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+    // Create temporary file with template
+    let mut temp_file = NamedTempFile::new()?;
+
+    // Write template as YAML
+    let template_content = "\
+# Create new bookmark (lines starting with # are comments)\n\
+# Save and exit to create, or exit without saving to cancel\n\
+# URL is required, other fields are optional\n\
+\n\
+url: \n\
+title: \n\
+tags: \n\
+description: |\n\
+  \n";
+
+    temp_file.write_all(template_content.as_bytes())?;
+
+    let temp_path = temp_file.path().to_owned();
+    let temp_path_str = temp_path.to_string_lossy();
+
+    // Open editor
+    let status = build_editor_command(&editor, &temp_path_str)
+        .status()
+        .map_err(|e| EditorError::EditorLaunch(editor.clone(), e))?;
+
+    if !status.success() {
+        return Err(EditorError::EditorExitFailure);
+    }
+
+    // Read edited content
+    let edited_content = fs::read_to_string(&temp_path)?;
+
+    // Parse the edited YAML with ID 0 (will be assigned by database)
+    parse_edited_bookmark(&edited_content, 0)
+}
+
 /// Build the command to launch the editor via shell
 fn build_editor_command(editor: &str, file_path: &str) -> Command {
     if cfg!(target_os = "windows") {
