@@ -1,13 +1,16 @@
 use crate::utils;
+use strs_tools::string;
 
 /// Parse comma-separated tags, filtering empty ones
 /// Note: strs_tools could be used for SIMD, but standard split is efficient for small tag strings
-pub fn parse_tags(tags_str: &str) -> Vec<String> {
-    tags_str
-        .split(',')
-        .map(|s| utils::trim_both_simd(s))
+pub fn parse_tags<S: AsRef<str>>(tags_str: S) -> Vec<String> {
+    string::split()
+        .src(tags_str.as_ref())
+        .delimeter(",")
+        .perform()
+        .map(|s| String::from(s)) // move Cow inside Split to String
+        .map(|s| String::from(utils::trim_both_simd(&s)))
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
         .collect()
 }
 

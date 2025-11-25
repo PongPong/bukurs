@@ -20,7 +20,7 @@ regex = "1.12"
 open = "5.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-strs_tools = "0.36"
+strs_tools = { version = "0.37.0", default-features = false, features = ["string_split", "std", "simd"] }
 simd-json = "0.17.0"
 uuid = { version = "1.18.1", features = ["v4"] }
 memchr = "2.7.6"
