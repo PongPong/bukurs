@@ -53,6 +53,7 @@ buku delete <ID>         # Delete a bookmark
 buku print               # List all bookmarks
 buku search <KEYWORDS>   # Search bookmarks
 buku tag <TAGS>          # Search by tags
+buku undo [COUNT]        # Undo last operation(s)
 buku lock [ITERATIONS]   # Encrypt database
 buku unlock [ITERATIONS] # Decrypt database
 buku import <FILE>       # Import bookmarks
@@ -135,6 +136,87 @@ buku update 1 --url https://newurl.com --tag rust,updated
 
 # Update description
 buku update 1 --comment "Updated description"
+
+# Refresh metadata from web (no options = refresh)
+buku update 1
+
+# Refresh multiple bookmarks
+buku update 1-10
+buku update "*"  # Refresh all bookmarks
+```
+
+### Tag Operations
+
+The `--tag` option supports powerful tag manipulation with prefix operators:
+
+#### Add Tags (`+` prefix)
+Add tags without removing existing ones:
+
+```bash
+# Add a single tag
+buku update 1 --tag +urgent
+
+# Add multiple tags
+buku update 1 --tag +urgent,+todo
+
+# Add tags to multiple bookmarks
+buku update 1-5 --tag +reviewed
+```
+
+#### Remove Tags (`-` prefix)
+Remove specific tags:
+
+```bash
+# Remove a single tag
+buku update 1 --tag -archived
+
+# Remove multiple tags
+buku update 1 --tag -old,-deprecated
+
+# Remove tags from multiple bookmarks
+buku update 1-10 --tag -draft
+```
+
+#### Replace Tags (`~` prefix)
+Replace one tag with another:
+
+```bash
+# Replace 'todo' with 'done'
+buku update 1 --tag ~todo:done
+
+# Replace 'draft' with 'published'
+buku update 1 --tag ~draft:published
+```
+
+#### Combine Operations
+You can combine different tag operations in a single command:
+
+```bash
+# Add 'urgent', remove 'archived', and replace 'todo' with 'done'
+buku update 1 --tag +urgent,-archived,~todo:done
+
+# Works with multiple bookmarks too
+buku update 1-100 --tag +reviewed,-draft
+```
+
+#### Plain Tags (No Prefix)
+Tags without a prefix are added by default:
+
+```bash
+# These are equivalent
+buku update 1 --tag newtag
+buku update 1 --tag +newtag
+```
+
+#### Batch Updates with Single Undo
+When updating multiple bookmarks without tag operations, changes are batched for efficiency:
+
+```bash
+# Update 100 bookmarks - single undo reverts all
+buku update 1-100 --title "Reviewed"
+
+# Undo once to revert all 100 changes
+buku undo
 ```
 
 ### Delete Bookmarks
@@ -146,6 +228,34 @@ buku delete 5
 # Delete with preserved order
 buku delete 5 --retain-order
 ```
+
+### Undo Operations
+
+Undo recent changes to your bookmarks:
+
+```bash
+# Undo the last operation
+buku undo
+
+# Undo the last 5 operations
+buku undo 5
+```
+
+**Batch Undo Support**: When you update multiple bookmarks in a single command (without tag operations), all changes are grouped together. A single `undo` command will revert all of them:
+
+```bash
+# Update 100 bookmarks
+buku update 1-100 --title "Reviewed"
+
+# One undo reverts all 100 changes
+buku undo
+# Output: ✓ Undid batch UPDATE: 100 bookmark(s) reverted
+```
+
+Supported operations:
+- **ADD**: Undoing an add removes the bookmark
+- **UPDATE**: Undoing an update restores the previous values
+- **DELETE**: Undoing a delete restores the bookmark
 
 ### Encryption
 

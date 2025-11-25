@@ -357,10 +357,89 @@ pub fn handle_args(
                 // Parse tag operations if provided
                 let tag_operations = tag.as_ref().map(|tags| parse_tag_operations(tags));
 
-                let mut success_count = 0;
-                let mut failed_count = 0;
+                if bookmarks.len() > 1 {
+                    // Batch update mode: use update_rec_batch for atomicity and single undo
 
-                for bookmark in &bookmarks {
+                    // For batch mode with tag operations, we need to compute per-bookmark tags
+                    // but we can only pass a single tags value to update_rec_batch
+                    // So we'll handle tag operations differently for batch vs single
+
+                    if tag_operations.is_some() {
+                        // When tag operations are present, we need per-bookmark computation
+                        // Fall back to individual updates but wrapped in explicit batch logging
+                        let mut success_count = 0;
+                        let mut failed_count = 0;
+
+                        for bookmark in &bookmarks {
+                            // Apply tag operations to existing tags
+                            let final_tags = if let Some(ref ops) = tag_operations {
+                                let new_tags = apply_tag_operations(&bookmark.tags, ops);
+                                Some(new_tags)
+                            } else {
+                                None
+                            };
+
+                            let tags_ref = final_tags.as_deref();
+
+                            match db.update_rec(
+                                bookmark.id,
+                                url_ref,
+                                title_str,
+                                tags_ref,
+                                desc_ref,
+                                immutable,
+                            ) {
+                                Ok(()) => {
+                                    success_count += 1;
+                                    eprintln!("✓ Updated bookmark {}", bookmark.id);
+                                }
+                                Err(e) => {
+                                    failed_count += 1;
+                                    if let rusqlite::Error::SqliteFailure(err, _) = &e {
+                                        if err.extended_code == 2067 {
+                                            eprintln!(
+                                                "✗ Bookmark {}: URL already exists",
+                                                bookmark.id
+                                            );
+                                        } else {
+                                            eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
+                                        }
+                                    } else {
+                                        eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
+                                    }
+                                }
+                            }
+                        }
+
+                        eprintln!();
+                        if success_count > 0 {
+                            eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
+                        }
+                        if failed_count > 0 {
+                            eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
+                        }
+                    } else {
+                        // No tag operations - can use efficient batch update
+                        match db.update_rec_batch(
+                            &bookmarks, url_ref, title_str, None, desc_ref, immutable,
+                        ) {
+                            Ok((success_count, _failed_count)) => {
+                                eprintln!();
+                                eprintln!(
+                                    "✓ Successfully updated {} bookmark(s) in batch",
+                                    success_count
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("✗ Batch update failed: {}", e);
+                                eprintln!("All changes have been rolled back.");
+                            }
+                        }
+                    }
+                } else {
+                    // Single bookmark update - use original logic
+                    let bookmark = &bookmarks[0];
+
                     // Apply tag operations to existing tags
                     let final_tags = if let Some(ref ops) = tag_operations {
                         let new_tags = apply_tag_operations(&bookmark.tags, ops);
@@ -380,11 +459,9 @@ pub fn handle_args(
                         immutable,
                     ) {
                         Ok(()) => {
-                            success_count += 1;
                             eprintln!("✓ Updated bookmark {}", bookmark.id);
                         }
                         Err(e) => {
-                            failed_count += 1;
                             if let rusqlite::Error::SqliteFailure(err, _) = &e {
                                 if err.extended_code == 2067 {
                                     eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
@@ -396,14 +473,6 @@ pub fn handle_args(
                             }
                         }
                     }
-                }
-
-                eprintln!();
-                if success_count > 0 {
-                    eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
-                }
-                if failed_count > 0 {
-                    eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
                 }
             } else {
                 // New behavior: refresh metadata from web
@@ -891,9 +960,9 @@ pub fn handle_args(
 
             for i in 0..count {
                 match db.undo_last()? {
-                    Some(op) => {
+                    Some((op_type, affected)) => {
                         undone_count += 1;
-                        operations.push(op);
+                        operations.push((op_type, affected));
                     }
                     None => {
                         if i == 0 {
@@ -911,11 +980,23 @@ pub fn handle_args(
 
             if undone_count > 0 {
                 if undone_count == 1 {
-                    eprintln!("✓ Undid last operation: {}", operations[0]);
+                    let (op_type, affected) = &operations[0];
+                    if *affected > 1 {
+                        eprintln!(
+                            "✓ Undid batch {}: {} bookmark(s) reverted",
+                            op_type, affected
+                        );
+                    } else {
+                        eprintln!("✓ Undid last operation: {}", op_type);
+                    }
                 } else {
                     eprintln!("✓ Undid {} operations:", undone_count);
-                    for (i, op) in operations.iter().enumerate() {
-                        eprintln!("  {}. {}", i + 1, op);
+                    for (i, (op_type, affected)) in operations.iter().enumerate() {
+                        if *affected > 1 {
+                            eprintln!("  {}. {} (batch: {} bookmarks)", i + 1, op_type, affected);
+                        } else {
+                            eprintln!("  {}. {}", i + 1, op_type);
+                        }
                     }
                 }
             }

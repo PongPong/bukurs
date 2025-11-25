@@ -29,10 +29,33 @@ impl BukuDb {
                 timestamp integer,
                 operation text,
                 bookmark_id integer,
-                data text
+                data text,
+                batch_id text
             )",
             [],
         )?;
+
+        // Migration: Add batch_id column if it doesn't exist (for existing databases)
+        let has_batch_id: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(undo_log)")?;
+            let rows = stmt.query_map([], |row| {
+                let name: String = row.get(1)?;
+                Ok(name)
+            })?;
+
+            let mut found = false;
+            for row in rows {
+                if row? == "batch_id" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+
+        if !has_batch_id {
+            conn.execute("ALTER TABLE undo_log ADD COLUMN batch_id text", [])?;
+        }
         if cfg!(debug_assertions) {
             conn.execute("DROP TABLE IF EXISTS bookmarks_fts", [])?;
         }
@@ -276,6 +299,121 @@ impl BukuDb {
         Ok(())
     }
 
+    /// Update multiple bookmarks in a single transaction with a shared batch_id for undo
+    /// Returns (success_count, failed_count)
+    pub fn update_rec_batch(
+        &self,
+        bookmarks: &[Bookmark],
+        url: Option<&str>,
+        title: Option<&str>,
+        tags_opt: Option<&str>,
+        desc: Option<&str>,
+        immutable: Option<u8>,
+    ) -> Result<(usize, usize)> {
+        if bookmarks.is_empty() {
+            return Ok((0, 0));
+        }
+
+        // Generate a unique batch_id using UUID v4
+        let batch_id = uuid::Uuid::new_v4().to_string();
+
+        let tx = self.conn.unchecked_transaction()?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs() as i64;
+
+        let mut success_count = 0;
+        let failed_count = 0;
+
+        for bookmark in bookmarks {
+            // Fetch current state for undo
+            let current = {
+                let mut stmt =
+                    tx.prepare("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
+                let mut rows = stmt.query([bookmark.id])?;
+                if let Some(row) = rows.next()? {
+                    Some(Bookmark::new(
+                        bookmark.id,
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                    ))
+                } else {
+                    None
+                }
+            };
+
+            // Log undo with batch_id
+            if let Some(ref bm) = current {
+                let data = serde_json::to_string(bm).unwrap_or_default();
+                tx.execute(
+                    "INSERT INTO undo_log (timestamp, operation, bookmark_id, data, batch_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    (timestamp, "UPDATE", bookmark.id, &data, &batch_id),
+                )?;
+            }
+
+            // Build update query
+            let mut query = "UPDATE bookmarks SET ".to_string();
+            let mut updates = Vec::new();
+            let immutable_val = immutable.unwrap_or(0);
+
+            if url.is_some() {
+                updates.push("URL = :url");
+            }
+            if title.is_some() {
+                updates.push("metadata = :title");
+            }
+            if tags_opt.is_some() {
+                updates.push("tags = :tags");
+            }
+            if desc.is_some() {
+                updates.push("desc = :desc");
+            }
+            if immutable.is_some() {
+                updates.push("flags = :flags");
+            }
+
+            if updates.is_empty() {
+                continue;
+            }
+
+            query.push_str(&updates.join(", "));
+            query.push_str(" WHERE id = :id");
+
+            let mut params: Vec<(&str, &dyn rusqlite::ToSql)> = Vec::new();
+
+            if let Some(ref u) = url {
+                params.push((":url", u));
+            }
+            if let Some(ref t) = title {
+                params.push((":title", t));
+            }
+            if let Some(ref tg) = tags_opt {
+                params.push((":tags", tg));
+            }
+            if let Some(ref d) = desc {
+                params.push((":desc", d));
+            }
+            if immutable.is_some() {
+                params.push((":flags", &immutable_val));
+            }
+            params.push((":id", &bookmark.id));
+
+            match tx.execute(&query, params.as_slice()) {
+                Ok(_) => success_count += 1,
+                Err(_) => {
+                    // On any failure, rollback the entire batch
+                    return Err(rusqlite::Error::ExecuteReturnedResults);
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok((success_count, failed_count))
+    }
+
     pub fn delete_rec(&self, id: usize) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
 
@@ -436,65 +574,105 @@ impl BukuDb {
         Ok(records)
     }
 
-    pub fn undo_last(&self) -> Result<Option<String>> {
+    /// Helper function to execute a single undo operation
+    fn execute_undo_operation(
+        tx: &rusqlite::Transaction,
+        operation_type: &str,
+        bookmark_id: usize,
+        data: &str,
+    ) -> Result<()> {
+        match operation_type {
+            "ADD" => {
+                tx.execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
+            }
+            "UPDATE" => {
+                if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(data) {
+                    tx.execute(
+                        "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
+                        (
+                            old_bookmark.url,
+                            old_bookmark.title,
+                            old_bookmark.tags,
+                            old_bookmark.description,
+                            bookmark_id,
+                        ),
+                    )?;
+                }
+            }
+            "DELETE" => {
+                if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(data) {
+                    tx.execute(
+                        "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
+                        (
+                            old_bookmark.id,
+                            old_bookmark.url,
+                            old_bookmark.title,
+                            old_bookmark.tags,
+                            old_bookmark.description,
+                        ),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Undo the last operation or batch of operations
+    /// Returns Some((operation_type, count)) on success, None if nothing to undo
+    pub fn undo_last(&self) -> Result<Option<(String, usize)>> {
         let tx = self.conn.unchecked_transaction()?;
 
+        // Get the most recent undo log entry
         let mut stmt = tx.prepare(
-            "SELECT id, operation, bookmark_id, data FROM undo_log ORDER BY id DESC LIMIT 1",
+            "SELECT id, operation, bookmark_id, data, batch_id FROM undo_log ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query([])?;
 
         if let Some(row) = rows.next()? {
-            let log_id: usize = row.get(0)?;
+            let _log_id: usize = row.get(0)?;
             let operation: String = row.get(1)?;
             let bookmark_id: usize = row.get(2)?;
             let data: String = row.get(3)?;
+            let batch_id: Option<String> = row.get(4)?;
             drop(rows);
             drop(stmt);
 
-            match operation.as_str() {
-                "ADD" => {
-                    // Undo ADD: Delete the bookmark
-                    tx.execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
+            let mut affected_count = 0;
+
+            if let Some(batch_id_val) = batch_id {
+                // This is a batch operation - undo all entries with the same batch_id
+                let mut stmt = tx.prepare(
+                    "SELECT id, operation, bookmark_id, data FROM undo_log WHERE batch_id = ?1 ORDER BY id ASC",
+                )?;
+                let batch_ops: Vec<(usize, String, usize, String)> = stmt
+                    .query_map([&batch_id_val], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<Result<Vec<_>>>()?;
+
+                // Undo each operation in the batch
+                for (log_entry_id, op_type, bm_id, op_data) in batch_ops {
+                    Self::execute_undo_operation(&tx, &op_type, bm_id, &op_data)?;
+
+                    // Delete this log entry
+                    tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_entry_id])?;
+                    affected_count += 1;
                 }
-                "UPDATE" => {
-                    // Undo UPDATE: Restore old data
-                    if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
-                        tx.execute(
-                            "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
-                            (
-                                old_bookmark.url,
-                                old_bookmark.title,
-                                old_bookmark.tags,
-                                old_bookmark.description,
-                                bookmark_id,
-                            ),
-                        )?;
-                    }
+            } else {
+                // Single operation (no batch_id)
+                Self::execute_undo_operation(&tx, &operation, bookmark_id, &data)?;
+
+                // Remove single log entry - get the ID from the original query
+                let mut stmt = tx.prepare("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
+                if let Some(log_id) = stmt.query_row([], |row| row.get::<_, usize>(0)).ok() {
+                    tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
                 }
-                "DELETE" => {
-                    // Undo DELETE: Re-insert the bookmark with original ID
-                    if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(&data) {
-                        tx.execute(
-                            "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
-                            (
-                                old_bookmark.id,
-                                old_bookmark.url,
-                                old_bookmark.title,
-                                old_bookmark.tags,
-                                old_bookmark.description,
-                            ),
-                        )?;
-                    }
-                }
-                _ => {}
+                affected_count = 1;
             }
 
-            // Remove log entry
-            tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
-
             tx.commit()?;
-            Ok(Some(operation))
+            Ok(Some((operation, affected_count)))
         } else {
             Ok(None)
         }
@@ -742,7 +920,7 @@ mod tests {
 
         // Undo the add
         let op = db.undo_last().unwrap();
-        assert_eq!(op, Some("ADD".to_string()));
+        assert_eq!(op, Some(("ADD".to_string(), 1)));
 
         // Verify it was deleted
         assert!(db.get_rec_by_id(id).unwrap().is_none());
@@ -764,7 +942,7 @@ mod tests {
 
         // Undo the update (this should revert to original state)
         let op = db.undo_last().unwrap();
-        assert_eq!(op, Some("UPDATE".to_string()));
+        assert_eq!(op, Some(("UPDATE".to_string(), 1)));
 
         // Verify it was reverted
         let bookmark = db.get_rec_by_id(id).unwrap();
@@ -791,7 +969,7 @@ mod tests {
 
         // Undo the delete
         let op = db.undo_last().unwrap();
-        assert_eq!(op, Some("DELETE".to_string()));
+        assert_eq!(op, Some(("DELETE".to_string(), 1)));
 
         // Verify it was restored
         let restored = db.get_rec_by_id(id).unwrap();
@@ -830,7 +1008,7 @@ mod tests {
 
         // Verify undo log only has one entry (the successful add)
         let undo = db.undo_last().unwrap();
-        assert_eq!(undo, Some("ADD".to_string()));
+        assert_eq!(undo, Some(("ADD".to_string(), 1)));
 
         // Verify no more undo entries
         let undo2 = db.undo_last().unwrap();
@@ -842,5 +1020,101 @@ mod tests {
         let (db, _temp) = setup_test_db();
         let results = db.search(&vec![], true, false, false).unwrap();
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_batch_update_and_undo() {
+        let (db, _temp) = setup_test_db();
+
+        // Create multiple bookmarks
+        let id1 = db
+            .add_rec("https://example1.com", "Example 1", ",test,", "Desc 1")
+            .unwrap();
+        let id2 = db
+            .add_rec("https://example2.com", "Example 2", ",test,", "Desc 2")
+            .unwrap();
+        let id3 = db
+            .add_rec("https://example3.com", "Example 3", ",test,", "Desc 3")
+            .unwrap();
+
+        // Get bookmarks for batch update
+        let bookmarks = vec![
+            db.get_rec_by_id(id1).unwrap().unwrap(),
+            db.get_rec_by_id(id2).unwrap().unwrap(),
+            db.get_rec_by_id(id3).unwrap().unwrap(),
+        ];
+
+        // Batch update all three bookmarks
+        let result = db.update_rec_batch(&bookmarks, None, Some("Updated Title"), None, None, None);
+        assert!(result.is_ok());
+        let (success, _fail) = result.unwrap();
+        assert_eq!(success, 3);
+
+        // Verify all were updated
+        assert_eq!(
+            db.get_rec_by_id(id1).unwrap().unwrap().title,
+            "Updated Title"
+        );
+        assert_eq!(
+            db.get_rec_by_id(id2).unwrap().unwrap().title,
+            "Updated Title"
+        );
+        assert_eq!(
+            db.get_rec_by_id(id3).unwrap().unwrap().title,
+            "Updated Title"
+        );
+
+        // Undo once - should revert all three
+        let undo_result = db.undo_last().unwrap();
+        assert_eq!(undo_result, Some(("UPDATE".to_string(), 3)));
+
+        // Verify all three are reverted
+        assert_eq!(db.get_rec_by_id(id1).unwrap().unwrap().title, "Example 1");
+        assert_eq!(db.get_rec_by_id(id2).unwrap().unwrap().title, "Example 2");
+        assert_eq!(db.get_rec_by_id(id3).unwrap().unwrap().title, "Example 3");
+    }
+
+    #[test]
+    fn test_batch_update_with_url() {
+        let (db, _temp) = setup_test_db();
+
+        // Create bookmarks
+        let id1 = db
+            .add_rec("https://example1.com", "Example 1", ",test,", "Desc 1")
+            .unwrap();
+        let id2 = db
+            .add_rec("https://example2.com", "Example 2", ",test,", "Desc 2")
+            .unwrap();
+
+        let bookmarks = vec![
+            db.get_rec_by_id(id1).unwrap().unwrap(),
+            db.get_rec_by_id(id2).unwrap().unwrap(),
+        ];
+
+        // Batch update with URL and description
+        let result =
+            db.update_rec_batch(&bookmarks, None, None, None, Some("New Description"), None);
+        assert!(result.is_ok());
+
+        // Verify updates
+        assert_eq!(
+            db.get_rec_by_id(id1).unwrap().unwrap().description,
+            "New Description"
+        );
+        assert_eq!(
+            db.get_rec_by_id(id2).unwrap().unwrap().description,
+            "New Description"
+        );
+
+        // Undo and verify revert
+        db.undo_last().unwrap();
+        assert_eq!(
+            db.get_rec_by_id(id1).unwrap().unwrap().description,
+            "Desc 1"
+        );
+        assert_eq!(
+            db.get_rec_by_id(id2).unwrap().unwrap().description,
+            "Desc 2"
+        );
     }
 }
