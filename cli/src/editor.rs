@@ -1,5 +1,4 @@
 use bukurs::models::bookmark::Bookmark;
-use memchr::memchr2;
 use std::env;
 use std::fs;
 use std::io::Write;
