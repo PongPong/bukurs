@@ -38,6 +38,8 @@ pub fn get_config_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+pub const EMPTY_STR: &str = "";
+
 /// the builtin trim_start functions are not SIMD optimized, so we implement our own
 /// to trim the start using SIMD optimization
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are
@@ -59,7 +61,7 @@ pub fn trim_start_simd(s: &str) -> &str {
         i += 1;
     }
 
-    ""
+    EMPTY_STR
 }
 
 /// the builtin trim_end functions are not SIMD optimized, so we implement our own
