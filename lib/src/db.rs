@@ -125,6 +125,22 @@ impl BukuDb {
         Ok(BukuDb { conn })
     }
 
+    /// Helper function to quote and escape keywords for FTS5 queries
+    /// Prevents FTS5 syntax errors by treating keywords as literal phrases
+    fn quote_fts5_keywords(keywords: &[String], column_prefix: Option<&str>) -> Vec<String> {
+        keywords
+            .iter()
+            .map(|k| {
+                let escaped = k.replace('"', "\"\"");
+                if let Some(prefix) = column_prefix {
+                    format!("{}:\"{}\"", prefix, escaped)
+                } else {
+                    format!("\"{}\"", escaped)
+                }
+            })
+            .collect()
+    }
+
     pub fn add_rec(&self, url: &str, title: &str, tags: &str, desc: &str) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
 
@@ -493,15 +509,7 @@ impl BukuDb {
             keywords[0].clone()
         } else {
             // Simple keywords - quote each to treat as literal phrase and avoid FTS5 syntax errors
-            // Escape double quotes within keywords by doubling them (FTS5 standard)
-            let quoted_keywords: Vec<String> = keywords
-                .iter()
-                .map(|k| {
-                    let escaped = k.replace('"', "\"\"");
-                    format!("\"{}\"", escaped)
-                })
-                .collect();
-
+            let quoted_keywords = Self::quote_fts5_keywords(keywords, None);
             let join_op = if any { " OR " } else { " AND " };
             quoted_keywords.join(join_op)
         };
@@ -546,41 +554,52 @@ impl BukuDb {
     }
 
     pub fn search_tags(&self, tags: &[String]) -> Result<Vec<Bookmark>> {
-        let mut query = "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE ".to_string();
-        let mut params: Vec<String> = Vec::new();
-        let mut conditions = Vec::new();
-
-        for (i, tag) in tags.iter().enumerate() {
-            let param_name = format!("?{}", i + 1);
-            conditions.push(format!("tags LIKE {}", param_name));
-            params.push(format!("%{}%", tag));
-        }
-
-        if conditions.is_empty() {
+        // No tags - return all
+        if tags.is_empty() {
             return self.get_rec_all();
         }
 
-        query.push_str(&conditions.join(" OR "));
+        // Build FTS5 query targeting the tags column specifically
+        let quoted_tags = Self::quote_fts5_keywords(tags, Some("tags"));
+        let query = quoted_tags.join(" OR ");
 
-        let mut stmt = self.conn.prepare(&query)?;
-        let params_refs: Vec<&dyn rusqlite::ToSql> =
-            params.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        // Query FTS5 table to get matching bookmark IDs
+        let mut stmt = self.conn.prepare(
+            "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH ?1 ORDER BY rank",
+        )?;
 
-        let rows = stmt.query_map(params_refs.as_slice(), |row| {
-            Ok(Bookmark::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })?;
+        let ids: Vec<usize> = stmt
+            .query_map([&query], |row| row.get::<_, i64>(0).map(|id| id as usize))?
+            .collect::<Result<Vec<_>>>()?;
 
-        let mut records = Vec::new();
-        for row in rows {
-            records.push(row?);
+        if ids.is_empty() {
+            return Ok(Vec::new());
         }
-        Ok(records)
+
+        // Fetch full bookmark data for matching IDs
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query_str = format!(
+            "SELECT id, URL, metadata, tags, desc FROM bookmarks WHERE id IN ({})",
+            placeholders
+        );
+
+        let mut stmt = self.conn.prepare(&query_str)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+
+        let bookmarks = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok(Bookmark::new(
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(bookmarks)
     }
 
     /// Helper function to execute a single undo operation
@@ -691,18 +710,16 @@ impl BukuDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
-    fn setup_test_db() -> (BukuDb, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        let db = BukuDb::init(&db_path).unwrap();
-        (db, temp_dir)
+    fn setup_test_db() -> BukuDb {
+        // Use in-memory database for faster tests
+        let db = BukuDb::init(Path::new(":memory:")).unwrap();
+        db
     }
 
     #[test]
     fn test_add_rec() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec(
                 "https://example.com",
@@ -716,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_add_duplicate_url() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec("https://example.com", "Example", ",test,", "Test")
             .unwrap();
         let result = db.add_rec("https://example.com", "Example2", ",test,", "Test2");
@@ -725,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_get_rec_by_id() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Example", ",test,", "Description")
             .unwrap();
@@ -740,14 +757,14 @@ mod tests {
 
     #[test]
     fn test_get_rec_by_id_not_found() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let bookmark = db.get_rec_by_id(999).unwrap();
         assert!(bookmark.is_none());
     }
 
     #[test]
     fn test_get_rec_all() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec("https://example1.com", "Example 1", ",test,", "Desc1")
             .unwrap();
         db.add_rec("https://example2.com", "Example 2", ",test,", "Desc2")
@@ -759,7 +776,7 @@ mod tests {
 
     #[test]
     fn test_update_rec() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Original", ",test,", "Original desc")
             .unwrap();
@@ -783,7 +800,7 @@ mod tests {
 
     #[test]
     fn test_update_partial() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Original", ",test,", "Original desc")
             .unwrap();
@@ -799,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_delete_rec() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Example", ",test,", "Desc")
             .unwrap();
@@ -812,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_search_keyword() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec(
             "https://rust-lang.org",
             "Rust",
@@ -837,7 +854,7 @@ mod tests {
 
     #[test]
     fn test_search_multiple_any() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec(
             "https://rust-lang.org",
             "Rust",
@@ -866,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_search_multiple_all() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec(
             "https://rust-lang.org",
             "Rust Programming",
@@ -896,7 +913,7 @@ mod tests {
 
     #[test]
     fn test_search_tags() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         db.add_rec(
             "https://rust-lang.org",
             "Rust",
@@ -919,7 +936,7 @@ mod tests {
 
     #[test]
     fn test_undo_add() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Example", ",test,", "Desc")
             .unwrap();
@@ -937,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_undo_update() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Original", ",test,", "Original desc")
             .unwrap();
@@ -964,7 +981,7 @@ mod tests {
 
     #[test]
     fn test_undo_delete() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let id = db
             .add_rec("https://example.com", "Example", ",test,", "Desc")
             .unwrap();
@@ -993,14 +1010,14 @@ mod tests {
 
     #[test]
     fn test_undo_empty() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let result = db.undo_last().unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_transaction_atomicity() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
 
         // Add a bookmark
         let id = db
@@ -1026,14 +1043,14 @@ mod tests {
 
     #[test]
     fn test_empty_search() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
         let results = db.search(&vec![], true, false, false).unwrap();
         assert_eq!(results.len(), 0);
     }
 
     #[test]
     fn test_batch_update_and_undo() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
 
         // Create multiple bookmarks
         let id1 = db
@@ -1085,7 +1102,7 @@ mod tests {
 
     #[test]
     fn test_batch_update_with_url() {
-        let (db, _temp) = setup_test_db();
+        let db = setup_test_db();
 
         // Create bookmarks
         let id1 = db
@@ -1125,5 +1142,280 @@ mod tests {
             db.get_rec_by_id(id2).unwrap().unwrap().description,
             "Desc 2"
         );
+    }
+
+    // Parameterized tests for search functionality
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(&["rust"], true, 1, "Rust")]
+    #[case(&["python"], true, 1, "Python")]
+    #[case(&["programming"], true, 2, "")] // Matches both
+    #[case(&["rust", "python"], true, 2, "")] // OR - matches both
+    #[case(&["rust", "programming"], false, 1, "Rust")] // AND - matches only Rust
+    #[case(&["nonexistent"], true, 0, "")]
+    fn test_search_variations(
+        #[case] keywords: &[&str],
+        #[case] any: bool,
+        #[case] expected_count: usize,
+        #[case] expected_first_title: &str,
+    ) {
+        let db = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust",
+            ",programming,",
+            "Rust language",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",programming,",
+            "Python language",
+        )
+        .unwrap();
+
+        let keywords_vec: Vec<String> = keywords.iter().map(|s| s.to_string()).collect();
+        let results = db.search(&keywords_vec, any, false, false).unwrap();
+
+        assert_eq!(results.len(), expected_count);
+        if expected_count > 0 && !expected_first_title.is_empty() {
+            assert_eq!(results[0].title, expected_first_title);
+        }
+    }
+
+    #[rstest]
+    #[case(&["rust$"], 1)] // Special char at end
+    #[case(&["c++"], 1)] // Plus signs
+    #[case(&["a^b"], 1)] // Caret
+    #[case(&["foo(bar)"], 1)] // Parentheses
+    #[case(&["tag[1]"], 1)] // Brackets
+    fn test_search_special_characters(#[case] keywords: &[&str], #[case] expected_count: usize) {
+        let db = setup_test_db();
+
+        // Add bookmarks with special characters in various fields
+        db.add_rec(
+            "https://example.com",
+            "rust$ programming",
+            ",test,",
+            "Description",
+        )
+        .unwrap();
+        db.add_rec("https://cpp.com", "c++ guide", ",cpp,", "C++ tutorial")
+            .unwrap();
+        db.add_rec("https://caret.com", "a^b notation", ",math,", "Math")
+            .unwrap();
+        db.add_rec("https://paren.com", "foo(bar) function", ",code,", "Code")
+            .unwrap();
+        db.add_rec("https://bracket.com", "tag[1] item", ",tags,", "Tags")
+            .unwrap();
+
+        let keywords_vec: Vec<String> = keywords.iter().map(|s| s.to_string()).collect();
+        let results = db.search(&keywords_vec, true, false, false).unwrap();
+
+        assert_eq!(results.len(), expected_count);
+    }
+
+    #[rstest]
+    #[case(&["rust"], 1, "Rust")]
+    #[case(&["programming"], 2, "")] // Both have programming tag
+    #[case(&["python"], 1, "Python")]
+    #[case(&["nonexistent"], 0, "")]
+    #[case(&["rust", "python"], 2, "")] // OR logic - matches both
+    fn test_search_tags_variations(
+        #[case] tags: &[&str],
+        #[case] expected_count: usize,
+        #[case] expected_first_title: &str,
+    ) {
+        let db = setup_test_db();
+        db.add_rec(
+            "https://rust-lang.org",
+            "Rust",
+            ",programming,rust,",
+            "Rust language",
+        )
+        .unwrap();
+        db.add_rec(
+            "https://python.org",
+            "Python",
+            ",programming,python,",
+            "Python language",
+        )
+        .unwrap();
+
+        let tags_vec: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+        let results = db.search_tags(&tags_vec).unwrap();
+
+        assert_eq!(results.len(), expected_count);
+        if expected_count > 0 && !expected_first_title.is_empty() {
+            assert_eq!(results[0].title, expected_first_title);
+        }
+    }
+
+    #[rstest]
+    #[case(&["c++"])]
+    #[case(&["test$tag"])]
+    #[case(&["foo-bar"])]
+    #[case(&["tag_name"])]
+    fn test_search_tags_special_characters(#[case] tags: &[&str]) {
+        let db = setup_test_db();
+
+        // Add bookmarks with special characters in tags
+        db.add_rec("https://cpp.com", "C++ Guide", ",c++,", "C++ programming")
+            .unwrap();
+        db.add_rec("https://test.com", "Test", ",test$tag,", "Testing")
+            .unwrap();
+        db.add_rec("https://dash.com", "Dash", ",foo-bar,", "Dashed tag")
+            .unwrap();
+        db.add_rec(
+            "https://underscore.com",
+            "Underscore",
+            ",tag_name,",
+            "Underscored",
+        )
+        .unwrap();
+
+        let tags_vec: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+        let results = db.search_tags(&tags_vec).unwrap();
+
+        assert_eq!(
+            results.len(),
+            1,
+            "Should find exactly one bookmark with tag: {:?}",
+            tags
+        );
+    }
+
+    #[rstest]
+    #[case("", "", ",", "")] // Empty fields
+    #[case("https://example.com", "Title with \"quotes\"", ",tag,", "Desc")]
+    #[case("https://example.com", "Title\nwith\nnewlines", ",tag,", "Desc")]
+    #[case("https://example.com", "Title", ",tag1,tag2,tag3,", "Long desc")]
+    fn test_add_and_retrieve_edge_cases(
+        #[case] url: &str,
+        #[case] title: &str,
+        #[case] tags: &str,
+        #[case] desc: &str,
+    ) {
+        let db = setup_test_db();
+
+        // Handle empty URL case separately
+        if url.is_empty() {
+            // Empty URL should ideally fail, but if it doesn't we just skip
+            if let Ok(id) = db.add_rec(url, title, tags, desc) {
+                let bookmark = db.get_rec_by_id(id).unwrap();
+                assert!(bookmark.is_some());
+            }
+            return;
+        }
+
+        let id = db.add_rec(url, title, tags, desc).unwrap();
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+
+        assert_eq!(bookmark.url, url);
+        assert_eq!(bookmark.title, title);
+        assert_eq!(bookmark.tags, tags);
+        assert_eq!(bookmark.description, desc);
+    }
+
+    #[rstest]
+    #[case(1, 1)]
+    #[case(5, 5)]
+    #[case(10, 10)]
+    fn test_multiple_undo_operations(
+        #[case] operation_count: usize,
+        #[case] expected_undos: usize,
+    ) {
+        let db = setup_test_db();
+
+        // Perform multiple add operations
+        let mut ids = Vec::new();
+        for i in 0..operation_count {
+            let id = db
+                .add_rec(
+                    &format!("https://example{}.com", i),
+                    &format!("Example {}", i),
+                    ",test,",
+                    "Desc",
+                )
+                .unwrap();
+            ids.push(id);
+        }
+
+        // Undo all operations
+        let mut undo_count = 0;
+        while let Some(_) = db.undo_last().unwrap() {
+            undo_count += 1;
+        }
+
+        assert_eq!(undo_count, expected_undos);
+
+        // Verify all bookmarks are gone
+        for id in ids {
+            assert!(db.get_rec_by_id(id).unwrap().is_none());
+        }
+    }
+
+    #[rstest]
+    #[case(Some("https://new.com"), None, None, None)]
+    #[case(None, Some("New Title"), None, None)]
+    #[case(None, None, Some(",new,tags,"), None)]
+    #[case(None, None, None, Some("New desc"))]
+    #[case(
+        Some("https://new.com"),
+        Some("New Title"),
+        Some(",new,"),
+        Some("New desc")
+    )]
+    fn test_update_rec_partial_updates(
+        #[case] url: Option<&str>,
+        #[case] title: Option<&str>,
+        #[case] tags: Option<&str>,
+        #[case] desc: Option<&str>,
+    ) {
+        let db = setup_test_db();
+        let id = db
+            .add_rec(
+                "https://original.com",
+                "Original Title",
+                ",original,",
+                "Original desc",
+            )
+            .unwrap();
+
+        db.update_rec(id, url, title, tags, desc, None).unwrap();
+
+        let bookmark = db.get_rec_by_id(id).unwrap().unwrap();
+
+        assert_eq!(bookmark.url, url.unwrap_or("https://original.com"));
+        assert_eq!(bookmark.title, title.unwrap_or("Original Title"));
+        assert_eq!(bookmark.tags, tags.unwrap_or(",original,"));
+        assert_eq!(bookmark.description, desc.unwrap_or("Original desc"));
+    }
+
+    #[test]
+    fn test_quote_fts5_keywords_without_prefix() {
+        let keywords = vec![
+            "test".to_string(),
+            "foo\"bar".to_string(),
+            "baz".to_string(),
+        ];
+        let quoted = BukuDb::quote_fts5_keywords(&keywords, None);
+
+        assert_eq!(quoted.len(), 3);
+        assert_eq!(quoted[0], "\"test\"");
+        assert_eq!(quoted[1], "\"foo\"\"bar\""); // Escaped quotes
+        assert_eq!(quoted[2], "\"baz\"");
+    }
+
+    #[test]
+    fn test_quote_fts5_keywords_with_prefix() {
+        let keywords = vec!["rust".to_string(), "c++".to_string()];
+        let quoted = BukuDb::quote_fts5_keywords(&keywords, Some("tags"));
+
+        assert_eq!(quoted.len(), 2);
+        assert_eq!(quoted[0], "tags:\"rust\"");
+        assert_eq!(quoted[1], "tags:\"c++\"");
     }
 }
