@@ -1,4 +1,5 @@
 use bukurs::models::bookmark::Bookmark;
+use memchr::memchr2;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -123,70 +124,124 @@ fn build_editor_command(editor: &str, file_path: &str) -> Command {
     }
 }
 
+#[inline]
+fn trim_start_simd(s: &str) -> &str {
+    let bytes = s.as_bytes();
+
+    if bytes.is_empty() || (bytes[0] != b' ' && bytes[0] != b'\t') {
+        return s;
+    }
+
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b != b' ' && b != b'\t' {
+            return &s[i..];
+        }
+        i += 1;
+    }
+
+    ""
+}
+
+#[inline]
+fn trim_end_simd(s: &str) -> &str {
+    let bytes = s.as_bytes();
+
+    if bytes.is_empty() {
+        return s;
+    }
+
+    let mut end = bytes.len();
+    while end > 0 {
+        let b = bytes[end - 1];
+        if b != b' ' && b != b'\t' {
+            break;
+        }
+        end -= 1;
+    }
+
+    &s[..end]
+}
+
+#[inline]
+fn trim_both_simd(s: &str) -> &str {
+    trim_end_simd(trim_start_simd(s))
+}
+
 fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> {
-    let mut url = String::new();
-    let mut title = String::new();
-    let mut tags = String::new();
-    let mut description = String::new();
+    let mut url: &str = "";
+    let mut title: &str = "";
+    let mut tags: &str = "";
+
+    // Description can span multiple lines — must own final result
+    let mut description_buf = String::new();
     let mut in_description = false;
 
     for line in content.lines() {
-        let trimmed = line.trim();
+        let trimmed = trim_both_simd(line);
 
-        // Skip comments always
+        // Skip comments
         if trimmed.starts_with('#') {
             continue;
         }
 
-        // Skip empty lines only when NOT in description
+        // Skip empty lines outside description
         if !in_description && trimmed.is_empty() {
             continue;
         }
 
         if in_description {
-            // Accumulate description lines (check original line for indentation)
+            // Indented or empty → description continues
             if line.starts_with("  ") || line.is_empty() {
-                if !description.is_empty() {
-                    description.push('\n');
+                if !description_buf.is_empty() {
+                    description_buf.push('\n');
                 }
-                description.push_str(line.trim_start());
-            } else if !trimmed.is_empty() {
-                // Non-indented, non-empty line means end of description
-                in_description = false;
+                description_buf.push_str(trim_start_simd(line));
+                continue;
             }
+
+            // Non-indented → end description
+            in_description = false;
         }
 
-        if !in_description {
-            if let Some(value) = trimmed.strip_prefix("url:") {
-                url = value.trim().to_string();
-            } else if let Some(value) = trimmed.strip_prefix("title:") {
-                title = value.trim().to_string();
-            } else if let Some(value) = trimmed.strip_prefix("tags:") {
-                tags = value.trim().to_string();
-            } else if trimmed.starts_with("description:") {
+        // Byte-prefix matching (fast, predictable)
+        let b = trimmed.as_bytes();
+        if b.starts_with(b"url:") {
+            url = trim_both_simd(&trimmed[4..]);
+            continue;
+        }
+        if b.starts_with(b"title:") {
+            title = trim_both_simd(&trimmed[6..]);
+            continue;
+        }
+        if b.starts_with(b"tags:") {
+            tags = trim_both_simd(&trimmed[5..]);
+            continue;
+        }
+        if b.starts_with(b"description:") {
+            let rest = trim_both_simd(&trimmed[12..]);
+
+            // Inline description: description: something
+            if !rest.is_empty() && rest != "|" {
+                description_buf = rest.to_string();
+                in_description = false;
+            } else {
                 in_description = true;
-                if let Some(value) = trimmed.strip_prefix("description:") {
-                    let inline_desc = value.trim();
-                    if !inline_desc.is_empty() && inline_desc != "|" {
-                        description = inline_desc.to_string();
-                        in_description = false;
-                    }
-                }
             }
         }
     }
 
-    // Validate
     if url.is_empty() {
         return Err(EditorError::EmptyUrl);
     }
 
     Ok(Bookmark::new(
         original_id,
-        url,
-        title,
-        tags,
-        description.trim().to_string(),
+        url.to_string(),
+        title.to_string(),
+        tags.to_string(),
+        description_buf.trim().to_string(),
     ))
 }
 
