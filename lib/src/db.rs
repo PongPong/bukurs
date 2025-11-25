@@ -492,9 +492,18 @@ impl BukuDb {
             // User provided FTS5 query syntax - use as is
             keywords[0].clone()
         } else {
-            // Simple keywords - join based on any/all flag
+            // Simple keywords - quote each to treat as literal phrase and avoid FTS5 syntax errors
+            // Escape double quotes within keywords by doubling them (FTS5 standard)
+            let quoted_keywords: Vec<String> = keywords
+                .iter()
+                .map(|k| {
+                    let escaped = k.replace('"', "\"\"");
+                    format!("\"{}\"", escaped)
+                })
+                .collect();
+
             let join_op = if any { " OR " } else { " AND " };
-            keywords.join(join_op)
+            quoted_keywords.join(join_op)
         };
 
         // Query FTS5 table to get matching bookmark IDs (ranked by relevance)
