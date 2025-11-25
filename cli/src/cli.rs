@@ -5,6 +5,21 @@ use bukurs::models::errors::AppError;
 use bukurs::{browser, crypto, fetch, import_export, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+fn get_exe_name() -> &'static str {
+    static EXE_NAME: OnceLock<String> = OnceLock::new();
+    EXE_NAME.get_or_init(|| {
+        std::env::args()
+            .next()
+            .as_ref()
+            .map(std::path::Path::new)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "bukurs".to_string())
+    })
+}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, disable_version_flag = true)]
@@ -326,16 +341,32 @@ pub fn handle_args(
 
             if ids.is_empty() {
                 eprintln!("Error: No bookmark IDs specified");
-                eprintln!("Usage: bukurs update <ID|RANGE|*> [OPTIONS]");
+                eprintln!("Usage: {} update <ID|RANGE|*> [OPTIONS]", get_exe_name());
                 eprintln!("Examples:");
-                eprintln!("  bukurs update 5                  # Refresh metadata for bookmark 5");
                 eprintln!(
-                    "  bukurs update 1-10               # Refresh metadata for bookmarks 1-10"
+                    "  {} update 5                  # Refresh metadata for bookmark 5",
+                    get_exe_name()
                 );
-                eprintln!("  bukurs update \"*\"                # Refresh all bookmarks");
-                eprintln!("  bukurs update 5 --tag +urgent    # Add 'urgent' tag");
-                eprintln!("  bukurs update 5 --tag -archived  # Remove 'archived' tag");
-                eprintln!("  bukurs update 5 --tag ~todo:done # Replace 'todo' with 'done'");
+                eprintln!(
+                    "  {} update 1-10               # Refresh metadata for bookmarks 1-10",
+                    get_exe_name()
+                );
+                eprintln!(
+                    "  {} update \"*\"                # Refresh all bookmarks",
+                    get_exe_name()
+                );
+                eprintln!(
+                    "  {} update 5 --tag +urgent    # Add 'urgent' tag",
+                    get_exe_name()
+                );
+                eprintln!(
+                    "  {} update 5 --tag -archived  # Remove 'archived' tag",
+                    get_exe_name()
+                );
+                eprintln!(
+                    "  {} update 5 --tag ~todo:done # Replace 'todo' with 'done'",
+                    get_exe_name()
+                );
                 return Err("No bookmark IDs specified".into());
             }
 
@@ -564,7 +595,8 @@ pub fn handle_args(
                             .join(", ")
                     );
                     eprintln!(
-                        "   To retry: bukurs update {}",
+                        "   To retry: {} update {}",
+                        get_exe_name(),
                         failed_ids
                             .iter()
                             .map(|id| id.to_string())
@@ -831,9 +863,12 @@ pub fn handle_args(
             } else {
                 eprintln!("Error: Please specify --list, --all, or --browsers");
                 eprintln!("Examples:");
-                eprintln!("  bukurs import-browsers --list");
-                eprintln!("  bukurs import-browsers --all");
-                eprintln!("  bukurs import-browsers --browsers chrome,firefox");
+                eprintln!("  {} import-browsers --list", get_exe_name());
+                eprintln!("  {} import-browsers --all", get_exe_name());
+                eprintln!(
+                    "  {} import-browsers --browsers chrome,firefox",
+                    get_exe_name()
+                );
                 return Err("No import option specified".into());
             }
         }
