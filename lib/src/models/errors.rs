@@ -5,4 +5,7 @@ pub enum AppError {
 
     #[error("Database error")]
     DbError,
+
+    #[error("invalid tag name: '{0}'")]
+    InvalidTagName(String),
 }

@@ -33,7 +33,7 @@ pub fn is_id_or_range(input: &str) -> bool {
     }
 
     // Range format: "5-10"
-    if input.contains('-') {
+    if utils::has_char(b'-', input) {
         let parts: Vec<&str> = input.split('-').collect();
         if parts.len() == 2 {
             return parts[0].parse::<usize>().is_ok() && parts[1].parse::<usize>().is_ok();
@@ -71,7 +71,7 @@ pub fn parse_ranges(
         if input == "*" {
             // Wildcard - return all IDs
             return Ok(all_ids);
-        } else if input.contains('-') {
+        } else if utils::has_char(b'-', input) {
             // Range: "5-10"
             let parts: Vec<&str> = input.split('-').collect();
             if parts.len() == 2 {

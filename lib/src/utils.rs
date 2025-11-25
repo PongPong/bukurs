@@ -1,3 +1,4 @@
+use memchr::memchr;
 use std::path::PathBuf;
 
 pub fn get_default_dbdir() -> PathBuf {
@@ -43,7 +44,8 @@ pub fn get_config_dir() -> PathBuf {
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are
 /// preserved
 #[inline]
-pub fn trim_start_simd(s: &str) -> &str {
+pub fn trim_start_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
+    let s = s.as_ref();
     let bytes = s.as_bytes();
 
     if bytes.is_empty() || (bytes[0] != b' ' && bytes[0] != b'\t') {
@@ -66,7 +68,8 @@ pub fn trim_start_simd(s: &str) -> &str {
 /// to trim the end using SIMD optimization
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are preserved
 #[inline]
-pub fn trim_end_simd(s: &str) -> &str {
+pub fn trim_end_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
+    let s = s.as_ref();
     let bytes = s.as_bytes();
 
     if bytes.is_empty() {
@@ -89,6 +92,16 @@ pub fn trim_end_simd(s: &str) -> &str {
 /// to trim both ends using the SIMD optimized functions above
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are preserved
 #[inline]
-pub fn trim_both_simd(s: &str) -> &str {
+pub fn trim_both_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
     trim_end_simd(trim_start_simd(s))
+}
+
+#[inline]
+pub fn has_char<S: AsRef<str>>(b: u8, s: S) -> bool {
+    memchr(b, s.as_ref().as_bytes()).is_some()
+}
+
+#[inline]
+pub fn has_spaces<S: AsRef<str>>(s: S) -> bool {
+    has_char(b' ', s)
 }
