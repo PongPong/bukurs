@@ -17,36 +17,67 @@ pub enum TagOp {
 /// - `~old:new` - Replace old tag with new tag
 /// - `tag` - Add tag (no prefix = add)
 pub fn parse_tag_operations(tags: &[String]) -> Vec<TagOp> {
-    tags.iter()
-        .filter_map(|tag| {
-            if tag.is_empty() {
-                return None;
-            }
+    let mut operations = Vec::new();
+    let mut invalid_tags = Vec::new();
+    let mut invalid_syntax = Vec::new();
 
-            if let Some(tag_name) = tag.strip_prefix('+') {
-                Some(TagOp::Add(tag_name.to_string()))
-            } else if let Some(tag_name) = tag.strip_prefix('-') {
-                Some(TagOp::Remove(tag_name.to_string()))
-            } else if let Some(replace_spec) = tag.strip_prefix('~') {
-                // Format: ~old:new
-                if let Some((old, new)) = replace_spec.split_once(':') {
-                    Some(TagOp::Replace {
+    for tag in tags {
+        if tag.is_empty() {
+            continue;
+        }
+
+        if let Some(tag_name) = tag.strip_prefix('+') {
+            if tag_name.contains(' ') {
+                invalid_tags.push(format!("+{}", tag_name));
+            } else {
+                operations.push(TagOp::Add(tag_name.to_string()));
+            }
+        } else if let Some(tag_name) = tag.strip_prefix('-') {
+            if tag_name.contains(' ') {
+                invalid_tags.push(format!("-{}", tag_name));
+            } else {
+                operations.push(TagOp::Remove(tag_name.to_string()));
+            }
+        } else if let Some(replace_spec) = tag.strip_prefix('~') {
+            // Format: ~old:new
+            if let Some((old, new)) = replace_spec.split_once(':') {
+                if old.contains(' ') || new.contains(' ') {
+                    invalid_tags.push(format!("~{}", replace_spec));
+                } else {
+                    operations.push(TagOp::Replace {
                         old: old.to_string(),
                         new: new.to_string(),
-                    })
-                } else {
-                    eprintln!(
-                        "Warning: Invalid replace syntax '{}', expected '~old:new'",
-                        tag
-                    );
-                    None
+                    });
                 }
             } else {
-                // No prefix = add
-                Some(TagOp::Add(tag.to_string()))
+                invalid_syntax.push(tag.clone());
             }
-        })
-        .collect()
+        } else {
+            // No prefix = add
+            if tag.contains(' ') {
+                invalid_tags.push(tag.clone());
+            } else {
+                operations.push(TagOp::Add(tag.to_string()));
+            }
+        }
+    }
+
+    // Print consolidated warnings
+    if !invalid_tags.is_empty() {
+        eprintln!(
+            "Warning: The following tags contain spaces and were ignored: {}",
+            invalid_tags.join(", ")
+        );
+    }
+
+    if !invalid_syntax.is_empty() {
+        eprintln!(
+            "Warning: Invalid replace syntax (expected '~old:new'): {}",
+            invalid_syntax.join(", ")
+        );
+    }
+
+    operations
 }
 
 /// Apply tag operations to existing tags
@@ -111,6 +142,20 @@ mod tests {
         let input = vec!["~nocolon".to_string()];
         let result = parse_tag_operations(&input);
         assert_eq!(result, vec![]); // Should skip invalid
+    }
+
+    #[test]
+    fn test_parse_tags_with_spaces() {
+        let input = vec![
+            "tag with space".to_string(),
+            "+add space".to_string(),
+            "-remove space".to_string(),
+            "~old space:new".to_string(),
+            "~old:new space".to_string(),
+            "valid".to_string(),
+        ];
+        let result = parse_tag_operations(&input);
+        assert_eq!(result, vec![TagOp::Add("valid".to_string())]);
     }
 
     #[test]

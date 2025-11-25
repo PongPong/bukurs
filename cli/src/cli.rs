@@ -262,6 +262,15 @@ pub fn handle_args(
             offline,
         }) => {
             let tags = tag.unwrap_or_default();
+            for t in &tags {
+                if t.contains(' ') {
+                    return Err(format!(
+                        "Tag '{}' contains spaces. Tags cannot contain spaces.",
+                        t
+                    )
+                    .into());
+                }
+            }
 
             let fetch_result = if !offline {
                 match fetch_with_spinner(&url, &config.user_agent) {
@@ -310,9 +319,7 @@ pub fn handle_args(
                     if let rusqlite::Error::SqliteFailure(err, _) = &e {
                         // 2067 = SQLITE_CONSTRAINT_UNIQUE
                         if err.extended_code == 2067 {
-                            eprintln!("Error: Another bookmark with this URL already exists");
-                            eprintln!("URL: {}", url);
-                            return Err(AppError::DuplicateUrl.into());
+                            return Err(AppError::DuplicateUrl(url.clone()).into());
                         }
                     }
 
@@ -340,7 +347,6 @@ pub fn handle_args(
                 || immutable.is_some();
 
             if ids.is_empty() {
-                eprintln!("Error: No bookmark IDs specified");
                 eprintln!("Usage: {} update <ID|RANGE|*> [OPTIONS]", get_exe_name());
                 eprintln!("Examples:");
                 eprintln!(
@@ -930,11 +936,9 @@ pub fn handle_args(
                                     if let rusqlite::Error::SqliteFailure(err, _) = &e {
                                         if err.extended_code == 2067 {
                                             // UNIQUE constraint failed
-                                            eprintln!(
-                                                "Error: Another bookmark with this URL already exists"
+                                            return Err(
+                                                AppError::DuplicateUrl(edited.url.clone()).into()
                                             );
-                                            eprintln!("URL: {}", edited.url);
-                                            return Err(AppError::DuplicateUrl.into());
                                         }
                                     }
                                     return Err(AppError::DbError.into());
@@ -965,11 +969,10 @@ pub fn handle_args(
                                 Err(e) => {
                                     if let rusqlite::Error::SqliteFailure(err, _) = &e {
                                         if err.extended_code == 2067 {
-                                            eprintln!(
-                                                "Error: Another bookmark with this URL already exists"
-                                            );
-                                            eprintln!("URL: {}", new_bookmark.url);
-                                            return Err(AppError::DuplicateUrl.into());
+                                            return Err(AppError::DuplicateUrl(
+                                                new_bookmark.url.clone(),
+                                            )
+                                            .into());
                                         }
                                     }
                                     return Err(AppError::DbError.into());
