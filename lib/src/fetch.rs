@@ -1,13 +1,13 @@
 use reqwest::blocking::Client;
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 use tl::ParserOptions;
 
 #[derive(Debug, PartialEq)]
 pub struct FetchResult {
     pub url: String,
-    pub title: String,
-    pub desc: String,
-    pub keywords: String,
+    pub title: Arc<String>,
+    pub desc: Arc<String>,
+    pub keywords: Arc<String>,
 }
 
 const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
@@ -69,9 +69,9 @@ pub fn parse_html(html: &str) -> Result<FetchResult, Box<dyn Error>> {
 
     Ok(FetchResult {
         url: String::new(), // Will be set by fetch_data
-        title,
-        desc,
-        keywords,
+        title: Arc::new(title),
+        desc: Arc::new(desc),
+        keywords: Arc::new(keywords),
     })
 }
 
