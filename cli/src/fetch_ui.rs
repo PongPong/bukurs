@@ -26,7 +26,7 @@ pub fn fetch_with_spinner(
     match &result {
         Ok(_) => spinner.finish_with_message(format!("✓ {}", url_display)),
         Err(e) => {
-            let error_msg = categorize_error(e);
+            let error_msg = categorize_error(e.as_ref());
             spinner.finish_with_message(format!("✗ {} ({})", url_display, error_msg));
         }
     }
@@ -45,7 +45,7 @@ pub fn truncate_url(url: &str, max_len: usize) -> String {
 }
 
 /// Categorize error for user-friendly display
-pub fn categorize_error(error: &Box<dyn Error>) -> &'static str {
+pub fn categorize_error(error: &(dyn Error + 'static)) -> &'static str {
     let error_str = error.to_string();
 
     if error_str.contains("403") {
@@ -102,7 +102,7 @@ mod tests {
     fn test_categorize_error(#[case] error_msg: &str, #[case] expected: &str) {
         // Create a boxed error for testing
         let error: Box<dyn Error> = error_msg.into();
-        assert_eq!(categorize_error(&error), expected);
+        assert_eq!(categorize_error(error.as_ref()), expected);
     }
 
     #[test]
@@ -133,7 +133,7 @@ mod tests {
     #[case("page not found 404", "not found")]
     fn test_categorize_error_case_insensitive(#[case] error_msg: &str, #[case] expected: &str) {
         let error: Box<dyn Error> = error_msg.into();
-        assert_eq!(categorize_error(&error), expected);
+        assert_eq!(categorize_error(error.as_ref()), expected);
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod tests {
         // When multiple keywords match, ensure correct priority
         let error: Box<dyn Error> = "connection timeout occurred".into();
         // "timeout" should take precedence over "connection"
-        assert_eq!(categorize_error(&error), "timeout");
+        assert_eq!(categorize_error(error.as_ref()), "timeout");
     }
 
     // Tests for fetch_with_spinner

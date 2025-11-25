@@ -34,7 +34,7 @@ impl OutputFormat {
     }
 
     pub fn print_bookmarks(
-        self: Self,
+        self,
         records: &Vec<bukurs::models::bookmark::Bookmark>,
         no_color: bool,
     ) {

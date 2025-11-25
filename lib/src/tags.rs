@@ -6,9 +6,10 @@ use strs_tools::string;
 pub fn parse_tags<S: AsRef<str>>(tags_str: S) -> Vec<String> {
     string::split()
         .src(tags_str.as_ref())
+        .preserving_delimeters(false)
         .delimeter(",")
         .perform()
-        .map(|s| String::from(s)) // move Cow inside Split to String
+        .map(String::from) // move Cow inside Split to String
         .map(|s| String::from(utils::trim_both_simd(&s)))
         .filter(|s| !s.is_empty())
         .collect()

@@ -26,7 +26,7 @@ pub fn run_fuzzy_search(
 
     let selected_items = Skim::run_with(&options, Some(items))
         .map(|out| out.selected_items)
-        .unwrap_or_else(|| Vec::new());
+        .unwrap_or_default();
 
     if selected_items.is_empty() {
         return Ok(None);

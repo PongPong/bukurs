@@ -26,7 +26,7 @@ impl BrowserType {
     }
 
     /// Parse browser type from string (case-insensitive)
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "chrome" => Some(BrowserType::Chrome),
             "firefox" => Some(BrowserType::Firefox),
@@ -402,7 +402,7 @@ pub fn import_from_selected_browsers(
     // Parse browser names
     let requested_browsers: Vec<BrowserType> = browser_names
         .iter()
-        .filter_map(|name| BrowserType::from_str(name))
+        .filter_map(|name| BrowserType::from_string(name))
         .collect();
 
     if requested_browsers.is_empty() {
@@ -458,13 +458,13 @@ mod tests {
 
     #[test]
     fn test_browser_type_from_str() {
-        assert_eq!(BrowserType::from_str("chrome"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_str("Chrome"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_str("CHROME"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_str("firefox"), Some(BrowserType::Firefox));
-        assert_eq!(BrowserType::from_str("edge"), Some(BrowserType::Edge));
-        assert_eq!(BrowserType::from_str("safari"), Some(BrowserType::Safari));
-        assert_eq!(BrowserType::from_str("invalid"), None);
+        assert_eq!(BrowserType::from_string("chrome"), Some(BrowserType::Chrome));
+        assert_eq!(BrowserType::from_string("Chrome"), Some(BrowserType::Chrome));
+        assert_eq!(BrowserType::from_string("CHROME"), Some(BrowserType::Chrome));
+        assert_eq!(BrowserType::from_string("firefox"), Some(BrowserType::Firefox));
+        assert_eq!(BrowserType::from_string("edge"), Some(BrowserType::Edge));
+        assert_eq!(BrowserType::from_string("safari"), Some(BrowserType::Safari));
+        assert_eq!(BrowserType::from_string("invalid"), None);
     }
 
     #[test]

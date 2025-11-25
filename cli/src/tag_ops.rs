@@ -1,5 +1,4 @@
 use bukurs::utils;
-use memchr::memchr;
 use std::collections::HashSet;
 
 /// Tag operation types
@@ -37,7 +36,7 @@ pub fn parse_tag_operations<'a>(tags: &'a [String]) -> Vec<TagOp<'a>> {
         };
 
         // SIMD-accelerated space check
-        let has_space = memchr(b' ', rest.as_bytes()).is_some();
+        let has_space = utils::has_spaces(rest);
 
         if has_space {
             match op {
@@ -56,17 +55,10 @@ pub fn parse_tag_operations<'a>(tags: &'a [String]) -> Vec<TagOp<'a>> {
 
             '~' => {
                 // SIMD-accelerated ':' search
-                if let Some(pos) = memchr(b':', rest.as_bytes()) {
-                    let (old, new) = rest.split_at(pos);
-                    let new = &new[1..]; // skip ':'
-
-                    if memchr(b' ', old.as_bytes()).is_none()
-                        && memchr(b' ', new.as_bytes()).is_none()
-                    {
-                        operations.push(TagOp::Replace { old, new });
-                    } else {
-                        invalid_tags.push(format!("~{}", rest));
-                    }
+                if let Some((old, new)) = utils::split_colon_no_space(rest) {
+                    operations.push(TagOp::Replace { old, new });
+                } else if utils::has_char(b':', rest) {
+                    invalid_tags.push(format!("~{}", rest));
                 } else {
                     invalid_syntax.push(tag.clone());
                 }
@@ -101,7 +93,7 @@ pub fn apply_tag_operations<'a>(existing_tags: &'a str, operations: &[TagOp<'a>]
     let mut set: HashSet<&'a str> = HashSet::new();
 
     if !existing_tags.is_empty() {
-        for tag in existing_tags.split(',').map(|t| utils::trim_both_simd(t)) {
+        for tag in existing_tags.split(',').map(utils::trim_both_simd) {
             if !tag.is_empty() && set.insert(tag) {
                 vec.push(tag);
             }

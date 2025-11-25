@@ -1,13 +1,9 @@
-use crate::format::OutputFormat;
-use crate::interactive;
 use bukurs::db::BukuDb;
-use bukurs::models::errors::AppError;
-use bukurs::{browser, crypto, fetch, import_export, operations};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-fn get_exe_name() -> &'static str {
+pub fn get_exe_name() -> &'static str {
     static EXE_NAME: OnceLock<String> = OnceLock::new();
     EXE_NAME.get_or_init(|| {
         std::env::args()
@@ -246,830 +242,22 @@ pub enum Commands {
 }
 
 // ============================================================================
-// Command Handlers
-// ============================================================================
-
-fn handle_add_command(
-    url: String,
-    tag: Option<Vec<String>>,
-    title: Option<String>,
-    comment: Option<String>,
-    offline: bool,
-    config: &bukurs::config::Config,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::fetch_ui::fetch_with_spinner;
-
-    let tags = tag.unwrap_or_default();
-    for t in &tags {
-        if t.contains(' ') {
-            return Err(format!("Tag '{}' contains spaces. Tags cannot contain spaces.", t).into());
-        }
-    }
-
-    let fetch_result = if !offline {
-        match fetch_with_spinner(&url, &config.user_agent) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("Warning: Failed to fetch metadata: {}", e);
-                eprintln!("Continuing with manual entry...");
-                fetch::FetchResult {
-                    url: url.clone(),
-                    title: "".to_string(),
-                    desc: "".to_string(),
-                    keywords: "".to_string(),
-                }
-            }
-        }
-    } else {
-        fetch::FetchResult {
-            url: url.clone(),
-            title: "".to_string(),
-            desc: "".to_string(),
-            keywords: "".to_string(),
-        }
-    };
-
-    let final_title = if let Some(t) = title {
-        t
-    } else if !fetch_result.title.is_empty() {
-        fetch_result.title
-    } else {
-        url.clone()
-    };
-
-    let desc = comment.unwrap_or(fetch_result.desc);
-
-    let tags_str = if tags.is_empty() {
-        format!(",{},", fetch_result.keywords)
-    } else {
-        format!(",{},", tags.join(","))
-    };
-
-    match db.add_rec(&fetch_result.url, &final_title, &tags_str, &desc) {
-        Ok(id) => {
-            eprintln!("Added bookmark at index {}", id);
-            Ok(())
-        }
-        Err(e) => {
-            if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                if err.extended_code == 2067 {
-                    return Err(AppError::DuplicateUrl(url.clone()).into());
-                }
-            }
-            Err(AppError::DbError.into())
-        }
-    }
-}
-
-fn handle_update_command(
-    ids: Vec<String>,
-    url: Option<String>,
-    tag: Option<Vec<String>>,
-    title: Option<String>,
-    comment: Option<String>,
-    immutable: Option<u8>,
-    config: &bukurs::config::Config,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::fetch_ui::fetch_with_spinner;
-    use crate::tag_ops::{apply_tag_operations, parse_tag_operations};
-
-    let has_edit_options = url.is_some()
-        || tag.is_some()
-        || title.is_some()
-        || comment.is_some()
-        || immutable.is_some();
-
-    if ids.is_empty() {
-        eprintln!("Usage: {} update <ID|RANGE|*> [OPTIONS]", get_exe_name());
-        eprintln!("Examples:");
-        eprintln!(
-            "  {} update 5                  # Refresh metadata for bookmark 5",
-            get_exe_name()
-        );
-        eprintln!(
-            "  {} update 1-10               # Refresh metadata for bookmarks 1-10",
-            get_exe_name()
-        );
-        eprintln!(
-            "  {} update \"*\"                # Refresh all bookmarks",
-            get_exe_name()
-        );
-        eprintln!(
-            "  {} update 5 --tag +urgent    # Add 'urgent' tag",
-            get_exe_name()
-        );
-        eprintln!(
-            "  {} update 5 --tag -archived  # Remove 'archived' tag",
-            get_exe_name()
-        );
-        eprintln!(
-            "  {} update 5 --tag ~todo:done # Replace 'todo' with 'done'",
-            get_exe_name()
-        );
-        return Err("No bookmark IDs specified".into());
-    }
-
-    if has_edit_options {
-        // Field update mode
-        let operation = operations::prepare_print(&ids, db)?;
-        let bookmarks = operation.bookmarks;
-
-        if bookmarks.is_empty() {
-            eprintln!("No bookmarks found");
-            return Ok(());
-        }
-
-        let url_ref = url.as_deref();
-        let title_str = title.as_deref();
-        let desc_ref = comment.as_deref();
-        let tag_operations = tag.as_ref().map(|tags| parse_tag_operations(tags));
-
-        if bookmarks.len() > 1 {
-            // Batch update mode
-            if tag_operations.is_some() {
-                // Individual updates for tag operations
-                let mut success_count = 0;
-                let mut failed_count = 0;
-
-                for bookmark in &bookmarks {
-                    let final_tags = if let Some(ref ops) = tag_operations {
-                        let new_tags = apply_tag_operations(&bookmark.tags, ops);
-                        Some(new_tags)
-                    } else {
-                        None
-                    };
-
-                    let tags_ref = final_tags.as_deref();
-
-                    match db.update_rec(
-                        bookmark.id,
-                        url_ref,
-                        title_str,
-                        tags_ref,
-                        desc_ref,
-                        immutable,
-                    ) {
-                        Ok(()) => {
-                            success_count += 1;
-                            eprintln!("✓ Updated bookmark {}", bookmark.id);
-                        }
-                        Err(e) => {
-                            failed_count += 1;
-                            if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                if err.extended_code == 2067 {
-                                    eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
-                                } else {
-                                    eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                                }
-                            } else {
-                                eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                            }
-                        }
-                    }
-                }
-
-                eprintln!();
-                if success_count > 0 {
-                    eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
-                }
-                if failed_count > 0 {
-                    eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
-                }
-            } else {
-                // Efficient batch update
-                match db.update_rec_batch(&bookmarks, url_ref, title_str, None, desc_ref, immutable)
-                {
-                    Ok((success_count, _failed_count)) => {
-                        eprintln!();
-                        eprintln!(
-                            "✓ Successfully updated {} bookmark(s) in batch",
-                            success_count
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("✗ Batch update failed: {}", e);
-                        eprintln!("All changes have been rolled back.");
-                    }
-                }
-            }
-        } else {
-            // Single bookmark update
-            let bookmark = &bookmarks[0];
-
-            let final_tags = if let Some(ref ops) = tag_operations {
-                let new_tags = apply_tag_operations(&bookmark.tags, ops);
-                Some(new_tags)
-            } else {
-                None
-            };
-
-            let tags_ref = final_tags.as_deref();
-
-            match db.update_rec(
-                bookmark.id,
-                url_ref,
-                title_str,
-                tags_ref,
-                desc_ref,
-                immutable,
-            ) {
-                Ok(()) => {
-                    eprintln!("✓ Updated bookmark {}", bookmark.id);
-                }
-                Err(e) => {
-                    if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                        if err.extended_code == 2067 {
-                            eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
-                        } else {
-                            eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                        }
-                    } else {
-                        eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                    }
-                }
-            }
-        }
-    } else {
-        // Refresh metadata mode
-        use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-
-        let operation = operations::prepare_print(&ids, db)?;
-        let bookmarks = operation.bookmarks;
-
-        if bookmarks.is_empty() {
-            eprintln!("No bookmarks found");
-            return Ok(());
-        }
-
-        eprintln!("Refreshing metadata for {} bookmark(s)...", bookmarks.len());
-
-        let multi = MultiProgress::new();
-        let pb = multi.add(ProgressBar::new(bookmarks.len() as u64));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{msg} [{bar:40.cyan/blue}] {pos}/{len}")
-                .unwrap()
-                .progress_chars("=>-"),
-        );
-        pb.set_message("Overall progress");
-
-        let mut success_count = 0;
-        let mut failed_count = 0;
-        let mut failed_ids: Vec<usize> = Vec::new();
-
-        for bookmark in &bookmarks {
-            match fetch_with_spinner(&bookmark.url, &config.user_agent) {
-                Ok(fetch_result) => {
-                    let new_title = if !fetch_result.title.is_empty() {
-                        Some(fetch_result.title.as_str())
-                    } else {
-                        None
-                    };
-
-                    let new_desc = if !fetch_result.desc.is_empty() {
-                        Some(fetch_result.desc.as_str())
-                    } else {
-                        None
-                    };
-
-                    match db.update_rec(bookmark.id, None, new_title, None, new_desc, None) {
-                        Ok(()) => success_count += 1,
-                        Err(_) => {
-                            failed_count += 1;
-                            failed_ids.push(bookmark.id);
-                        }
-                    }
-                }
-                Err(_) => {
-                    failed_count += 1;
-                    failed_ids.push(bookmark.id);
-                }
-            }
-            pb.inc(1);
-        }
-
-        pb.finish_and_clear();
-
-        if success_count > 0 {
-            eprintln!("✓ Successfully refreshed {} bookmark(s)", success_count);
-        }
-        if failed_count > 0 {
-            eprintln!("✗ Failed to refresh {} bookmark(s)", failed_count);
-            eprintln!(
-                "   Failed IDs: {}",
-                failed_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            eprintln!(
-                "   To retry: {} update {}",
-                get_exe_name(),
-                failed_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-        }
-    }
-
-    Ok(())
-}
-
-fn handle_delete_command(
-    ids: Vec<String>,
-    force: bool,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let operation = operations::prepare_delete(&ids, db)?;
-
-    if operation.bookmarks.is_empty() {
-        match operation.mode {
-            operations::SelectionMode::ByKeywords(_) => {
-                eprintln!("No bookmarks found matching the search criteria.");
-            }
-            _ => {
-                eprintln!("No bookmarks to delete.");
-            }
-        }
-        return Ok(());
-    }
-
-    // Display bookmarks to be deleted
-    match &operation.mode {
-        operations::SelectionMode::All => {
-            eprintln!("⚠️  DELETE ALL BOOKMARKS:");
-        }
-        operations::SelectionMode::ByKeywords(keywords) => {
-            eprintln!("Searching for bookmarks matching: {:?}", keywords);
-            eprintln!("Bookmarks matching search criteria:");
-        }
-        operations::SelectionMode::ByIds(_) => {
-            eprintln!("Bookmarks to be deleted:");
-        }
-    }
-
-    for bookmark in &operation.bookmarks {
-        eprintln!("  {}. {} - {}", bookmark.id, bookmark.title, bookmark.url);
-    }
-
-    // Ask for confirmation unless --force
-    let confirmed = if force {
-        true
-    } else {
-        use std::io::{self, Write};
-
-        let prompt = match operation.mode {
-            operations::SelectionMode::All => {
-                format!(
-                    "\n⚠️  DELETE ALL {} bookmark(s)? [y/N]: ",
-                    operation.bookmarks.len()
-                )
-            }
-            _ => {
-                format!(
-                    "\nDelete {} bookmark(s)? [y/N]: ",
-                    operation.bookmarks.len()
-                )
-            }
-        };
-
-        print!("{}", prompt);
-        io::stdout().flush()?;
-
-        let mut response = String::new();
-        io::stdin().read_line(&mut response)?;
-        let response = response.trim().to_lowercase();
-        response == "y" || response == "yes"
-    };
-
-    if confirmed {
-        let count = operations::execute_delete(&operation, db)?;
-        eprintln!("Deleted {} bookmark(s).", count);
-    } else {
-        eprintln!("Deletion cancelled.");
-    }
-
-    Ok(())
-}
-
-fn handle_edit_command(id: Option<usize>, db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    match id {
-        Some(bookmark_id) => {
-            // Edit existing bookmark
-            let bookmark = db
-                .get_rec_by_id(bookmark_id)?
-                .ok_or_else(|| format!("Bookmark {} not found", bookmark_id))?;
-
-            eprintln!("Opening bookmark #{} in editor...", bookmark_id);
-
-            match crate::editor::edit_bookmark(&bookmark) {
-                Ok(edited) => {
-                    match db.update_rec(
-                        bookmark_id,
-                        Some(&edited.url),
-                        Some(&edited.title),
-                        Some(&edited.tags),
-                        Some(&edited.description),
-                        None,
-                    ) {
-                        Ok(()) => {
-                            eprintln!("Bookmark {} updated successfully", bookmark_id);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                if err.extended_code == 2067 {
-                                    return Err(AppError::DuplicateUrl(edited.url.clone()).into());
-                                }
-                            }
-                            Err(AppError::DbError.into())
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Edit cancelled or failed: {}", e);
-                    Ok(())
-                }
-            }
-        }
-        None => {
-            // Create new bookmark
-            eprintln!("Opening editor to create new bookmark...");
-
-            match crate::editor::edit_new_bookmark() {
-                Ok(new_bookmark) => {
-                    match db.add_rec(
-                        &new_bookmark.url,
-                        &new_bookmark.title,
-                        &new_bookmark.tags,
-                        &new_bookmark.description,
-                    ) {
-                        Ok(id) => {
-                            eprintln!("✓ Created new bookmark at index {}", id);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                if err.extended_code == 2067 {
-                                    return Err(
-                                        AppError::DuplicateUrl(new_bookmark.url.clone()).into()
-                                    );
-                                }
-                            }
-                            Err(AppError::DbError.into())
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Creation cancelled or failed: {}", e);
-                    Ok(())
-                }
-            }
-        }
-    }
-}
-
-fn handle_print_command(
-    ids: Vec<String>,
-    limit: Option<usize>,
-    format_str: Option<String>,
-    nc: bool,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Use the prepare_print operation (reuses DeleteMode logic)
-    let operation = operations::prepare_print(&ids, db)?;
-
-    // Handle empty results
-    if operation.bookmarks.is_empty() {
-        match operation.mode {
-            operations::SelectionMode::ByKeywords(_) => {
-                eprintln!("No bookmarks found matching the search criteria.");
-            }
-            _ => {
-                eprintln!("No bookmarks to display.");
-            }
-        }
-        return Ok(());
-    }
-
-    // Apply limit if specified
-    let mut records = operation.bookmarks;
-    if let Some(limit) = limit {
-        let start = records.len().saturating_sub(limit);
-        records = records.into_iter().skip(start).collect();
-    }
-
-    let format: OutputFormat = format_str
-        .as_deref()
-        .and_then(|s| Some(OutputFormat::from_string(s)))
-        .unwrap_or(OutputFormat::Colored);
-
-    format.print_bookmarks(&records, nc);
-    Ok(())
-}
-
-fn handle_search_command(
-    keywords: Vec<String>,
-    all: bool,
-    deep: bool,
-    regex: bool,
-    limit: Option<usize>,
-    format_str: Option<String>,
-    nc: bool,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let any = !all;
-    eprintln!("Searching for: {:?}", keywords);
-    let mut records = db.search(&keywords, any, deep, regex)?;
-
-    // Apply limit if specified
-    if let Some(limit) = limit {
-        let start = records.len().saturating_sub(limit);
-        records = records.into_iter().skip(start).collect();
-    }
-
-    let format: OutputFormat = format_str
-        .as_deref() // Option<&str>
-        .and_then(|s| Some(OutputFormat::from_string(s)))
-        .unwrap_or(OutputFormat::Colored); // default
-
-    format.print_bookmarks(&records, nc);
-    Ok(())
-}
-
-fn handle_tag_command(
-    tags: Vec<String>,
-    limit: Option<usize>,
-    format_str: Option<String>,
-    nc: bool,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if tags.is_empty() {
-        eprintln!("Listing all tags (not implemented yet)");
-    } else {
-        eprintln!("Searching tags: {:?}", tags);
-        let mut records = db.search_tags(&tags)?;
-        if records.is_empty() {
-            eprintln!("No bookmarks found with the specified tags.");
-            return Ok(());
-        }
-
-        // Apply limit if specified
-        if let Some(limit) = limit {
-            let start = records.len().saturating_sub(limit);
-            records = records.into_iter().skip(start).collect();
-        }
-
-        let format: OutputFormat = format_str
-            .as_deref() // Option<&str>
-            .and_then(|s| Some(OutputFormat::from_string(s)))
-            .unwrap_or(OutputFormat::Colored); // default
-        format.print_bookmarks(&records, nc);
-    }
-    Ok(())
-}
-
-fn handle_lock_command(
-    iterations: u32,
-    db_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let password = rpassword::prompt_password("Enter password: ")?;
-    let confirm = rpassword::prompt_password("Confirm password: ")?;
-    if password != confirm {
-        return Err("Passwords do not match".into());
-    }
-
-    let enc_path = db_path.with_extension("db.enc");
-    println!(
-        "Encrypting {} to {} with {} iterations...",
-        db_path.display(),
-        enc_path.display(),
-        iterations
-    );
-    crypto::BukuCrypt::encrypt_file(iterations, db_path, &enc_path, &password)?;
-    eprintln!("Encryption complete.");
-    Ok(())
-}
-
-fn handle_unlock_command(
-    iterations: u32,
-    db_path: &std::path::Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let password = rpassword::prompt_password("Enter password: ")?;
-    let enc_path = if db_path.extension().map_or(false, |ext| ext == "enc") {
-        db_path.to_path_buf()
-    } else {
-        db_path.with_extension("db.enc")
-    };
-
-    let out_path = if enc_path.extension().map_or(false, |ext| ext == "enc") {
-        enc_path.with_extension("")
-    } else {
-        enc_path.with_extension("db")
-    };
-
-    println!(
-        "Decrypting {} to {} with {} iterations...",
-        enc_path.display(),
-        out_path.display(),
-        iterations
-    );
-    crypto::BukuCrypt::decrypt_file(iterations, &out_path, &enc_path, &password)?;
-    eprintln!("Decryption complete.");
-    Ok(())
-}
-
-fn handle_import_command(file: String, db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    let count = import_export::import_bookmarks(db, &file)?;
-    eprintln!(
-        "✓ Successfully imported {} bookmark(s) from {}",
-        count, file
-    );
-    Ok(())
-}
-
-fn handle_import_browsers_command(
-    list: bool,
-    all: bool,
-    browsers: Option<Vec<String>>,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if list {
-        // List detected browsers
-        let profiles = import_export::list_detected_browsers();
-        if profiles.is_empty() {
-            eprintln!("No browser profiles detected.");
-        } else {
-            eprintln!("Detected browser profiles:");
-            for profile in profiles {
-                eprintln!("  • {}", profile.display_string());
-            }
-        }
-    } else if all {
-        // Import from all detected browsers
-        eprintln!("Importing from all detected browsers...");
-        match import_export::auto_import_all(db) {
-            Ok(count) => {
-                eprintln!("✓ Successfully imported {} total bookmark(s)", count);
-            }
-            Err(e) => {
-                eprintln!("Error during import: {}", e);
-                return Err(e);
-            }
-        }
-    } else if let Some(browser_list) = browsers {
-        // Import from specific browsers
-        eprintln!("Importing from selected browsers: {:?}", browser_list);
-        match import_export::import_from_selected_browsers(db, &browser_list) {
-            Ok(count) => {
-                eprintln!("✓ Successfully imported {} total bookmark(s)", count);
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                return Err(e);
-            }
-        }
-    } else {
-        eprintln!("Error: Please specify --list, --all, or --browsers");
-        eprintln!("Examples:");
-        eprintln!("  {} import-browsers --list", get_exe_name());
-        eprintln!("  {} import-browsers --all", get_exe_name());
-        eprintln!(
-            "  {} import-browsers --browsers chrome,firefox",
-            get_exe_name()
-        );
-        return Err("No import option specified".into());
-    }
-    Ok(())
-}
-
-fn handle_export_command(file: String, db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    import_export::export_bookmarks(db, &file)?;
-    eprintln!("Exported bookmarks to {}", file);
-    Ok(())
-}
-
-fn handle_open_command(ids: Vec<String>, db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    if ids.is_empty() {
-        eprintln!("Opening random bookmark (not implemented yet)");
-    } else {
-        for arg in ids {
-            if let Ok(id) = arg.parse::<usize>() {
-                if let Some(rec) = db.get_rec_by_id(id)? {
-                    eprintln!("Opening: {}", rec.url);
-                    browser::open_url(&rec.url)?;
-                } else {
-                    eprintln!("Index {} not found", id);
-                }
-            } else {
-                eprintln!("Invalid index: {}", arg);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_shell_command(db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    interactive::run(db)?;
-    Ok(())
-}
-
-fn handle_undo_command(count: usize, db: &BukuDb) -> Result<(), Box<dyn std::error::Error>> {
-    if count == 0 {
-        eprintln!("Error: Count must be at least 1");
-        return Err("Invalid count".into());
-    }
-
-    let mut undone_count = 0;
-    let mut operations = Vec::new();
-
-    for i in 0..count {
-        match db.undo_last()? {
-            Some((op_type, affected)) => {
-                undone_count += 1;
-                operations.push((op_type, affected));
-            }
-            None => {
-                if i == 0 {
-                    eprintln!("Nothing to undo.");
-                } else {
-                    eprintln!(
-                        "No more operations to undo (undid {} operation(s)).",
-                        undone_count
-                    );
-                }
-                break;
-            }
-        }
-    }
-
-    if undone_count > 0 {
-        if undone_count == 1 {
-            let (op_type, affected) = &operations[0];
-            if *affected > 1 {
-                eprintln!(
-                    "✓ Undid batch {}: {} bookmark(s) reverted",
-                    op_type, affected
-                );
-            } else {
-                eprintln!("✓ Undid last operation: {}", op_type);
-            }
-        } else {
-            eprintln!("✓ Undid {} operations:", undone_count);
-            for (i, (op_type, affected)) in operations.iter().enumerate() {
-                if *affected > 1 {
-                    eprintln!("  {}. {} (batch: {} bookmarks)", i + 1, op_type, affected);
-                } else {
-                    eprintln!("  {}. {}", i + 1, op_type);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_no_command(
-    keywords: Vec<String>,
-    open: bool,
-    format_str: Option<String>,
-    nc: bool,
-    db: &BukuDb,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // No subcommand provided, Search with keywords
-    eprintln!("Searching for: {:?}", keywords);
-    // Fuzzy search with keywords
-    let query = if !keywords.is_empty() {
-        Some(keywords.join(" "))
-    } else {
-        None
-    };
-
-    let records = db.get_rec_all()?;
-    if let Some(selected) = bukurs::fuzzy::run_fuzzy_search(&records, query)? {
-        if open {
-            eprintln!("Opening: {}", selected.url);
-            browser::open_url(&selected.url)?;
-        } else {
-            let format: OutputFormat = format_str
-                .as_deref() // Option<&str>
-                .and_then(|s| Some(OutputFormat::from_string(s)))
-                .unwrap_or(OutputFormat::Colored); // default
-                                                   // Display selected bookmark
-            let selected = vec![selected];
-            format.print_bookmarks(&selected, nc);
-        }
-    }
-    Ok(())
-}
-
-// ============================================================================
 // Main Command Dispatcher
 // ============================================================================
+
+use crate::commands::{
+    add::AddCommand,
+    delete::DeleteCommand,
+    edit::EditCommand,
+    import_export::{ExportCommand, ImportBrowsersCommand, ImportCommand},
+    lock_unlock::{LockCommand, UnlockCommand},
+    misc::{NoCommand, OpenCommand, ShellCommand, UndoCommand},
+    print::PrintCommand,
+    search::SearchCommand,
+    tag::TagCommand,
+    update::UpdateCommand,
+    AppContext, BukuCommand,
+};
 
 pub fn handle_args(
     cli: Cli,
@@ -1077,14 +265,26 @@ pub fn handle_args(
     db_path: &std::path::Path,
     config: &bukurs::config::Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match cli.command {
+    let ctx = AppContext {
+        db,
+        config,
+        db_path,
+    };
+
+    let command: Box<dyn BukuCommand> = match cli.command {
         Some(Commands::Add {
             url,
             tag,
             title,
             comment,
             offline,
-        }) => handle_add_command(url, tag, title, comment, offline, config, db)?,
+        }) => Box::new(AddCommand {
+            url,
+            tag,
+            title,
+            comment,
+            offline,
+        }),
 
         Some(Commands::Update {
             ids,
@@ -1093,17 +293,27 @@ pub fn handle_args(
             title,
             comment,
             immutable,
-        }) => handle_update_command(ids, url, tag, title, comment, immutable, config, db)?,
+        }) => Box::new(UpdateCommand {
+            ids,
+            url,
+            tag,
+            title,
+            comment,
+            immutable,
+        }),
 
         Some(Commands::Delete {
             ids,
             force,
             retain_order: _,
-        }) => handle_delete_command(ids, force, db)?,
+        }) => Box::new(DeleteCommand { ids, force }),
 
-        Some(Commands::Print { ids, columns: _ }) => {
-            handle_print_command(ids, cli.limit, cli.format, cli.nc, db)?
-        }
+        Some(Commands::Print { ids, columns: _ }) => Box::new(PrintCommand {
+            ids,
+            limit: cli.limit,
+            format: cli.format,
+            nc: cli.nc,
+        }),
 
         Some(Commands::Search {
             keywords,
@@ -1111,40 +321,58 @@ pub fn handle_args(
             deep,
             regex,
             markers: _,
-        }) => handle_search_command(
-            keywords, all, deep, regex, cli.limit, cli.format, cli.nc, db,
-        )?,
+        }) => Box::new(SearchCommand {
+            keywords,
+            all,
+            deep,
+            regex,
+            limit: cli.limit,
+            format: cli.format,
+            nc: cli.nc,
+        }),
 
-        Some(Commands::Tag { tags }) => {
-            handle_tag_command(tags, cli.limit, cli.format, cli.nc, db)?
-        }
+        Some(Commands::Tag { tags }) => Box::new(TagCommand {
+            tags,
+            limit: cli.limit,
+            format: cli.format,
+            nc: cli.nc,
+        }),
 
-        Some(Commands::Lock { iterations }) => handle_lock_command(iterations, db_path)?,
+        Some(Commands::Lock { iterations }) => Box::new(LockCommand { iterations }),
 
-        Some(Commands::Unlock { iterations }) => handle_unlock_command(iterations, db_path)?,
+        Some(Commands::Unlock { iterations }) => Box::new(UnlockCommand { iterations }),
 
-        Some(Commands::Import { file }) => handle_import_command(file, db)?,
+        Some(Commands::Import { file }) => Box::new(ImportCommand { file }),
 
         Some(Commands::ImportBrowsers {
             list,
             all,
             browsers,
-        }) => handle_import_browsers_command(list, all, browsers, db)?,
+        }) => Box::new(ImportBrowsersCommand {
+            list,
+            all,
+            browsers,
+        }),
 
-        Some(Commands::Export { file }) => handle_export_command(file, db)?,
+        Some(Commands::Export { file }) => Box::new(ExportCommand { file }),
 
-        Some(Commands::Open { ids }) => handle_open_command(ids, db)?,
+        Some(Commands::Open { ids }) => Box::new(OpenCommand { ids }),
 
-        Some(Commands::Shell) => handle_shell_command(db)?,
+        Some(Commands::Shell) => Box::new(ShellCommand),
 
-        Some(Commands::Edit { id }) => handle_edit_command(id, db)?,
+        Some(Commands::Edit { id }) => Box::new(EditCommand { id }),
 
-        Some(Commands::Undo { count }) => handle_undo_command(count, db)?,
+        Some(Commands::Undo { count }) => Box::new(UndoCommand { count }),
 
-        None => handle_no_command(cli.keywords, cli.open, cli.format, cli.nc, db)?,
-    }
+        None => Box::new(NoCommand {
+            keywords: cli.keywords,
+            open: cli.open,
+            format: cli.format,
+            nc: cli.nc,
+        }),
+    };
 
-    Ok(())
+    command.execute(&ctx)
 }
 
 #[cfg(test)]

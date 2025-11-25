@@ -44,7 +44,7 @@ pub fn get_config_dir() -> PathBuf {
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are
 /// preserved
 #[inline]
-pub fn trim_start_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
+pub fn trim_start_simd<S: AsRef<str> + ?Sized>(s: &S) -> &str {
     let s = s.as_ref();
     let bytes = s.as_bytes();
 
@@ -68,7 +68,7 @@ pub fn trim_start_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
 /// to trim the end using SIMD optimization
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are preserved
 #[inline]
-pub fn trim_end_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
+pub fn trim_end_simd<S: AsRef<str> + ?Sized>(s: &S) -> &str {
     let s = s.as_ref();
     let bytes = s.as_bytes();
 
@@ -92,7 +92,7 @@ pub fn trim_end_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
 /// to trim both ends using the SIMD optimized functions above
 /// unlike the builtin one, only ascii spaces and tabs are trimmed, other unicode whitespace are preserved
 #[inline]
-pub fn trim_both_simd<'a, S: AsRef<str> + ?Sized>(s: &'a S) -> &'a str {
+pub fn trim_both_simd<S: AsRef<str> + ?Sized>(s: &S) -> &str {
     trim_end_simd(trim_start_simd(s))
 }
 
@@ -104,4 +104,27 @@ pub fn has_char<S: AsRef<str>>(b: u8, s: S) -> bool {
 #[inline]
 pub fn has_spaces<S: AsRef<str>>(s: S) -> bool {
     has_char(b' ', s)
+}
+
+#[inline]
+pub fn has_colon<S: AsRef<str>>(s: S) -> bool {
+    has_char(b':', s)
+}
+
+/// Splits a string at the first ':' if both sides contain no spaces.
+/// Returns Some((before_colon, after_colon)) if valid, None otherwise.
+#[inline]
+pub fn split_colon_no_space(s: &str) -> Option<(&str, &str)> {
+    if let Some(pos) = memchr(b':', s.as_bytes()) {
+        let (left, right) = s.split_at(pos);
+        let right = &right[1..]; // skip ':'
+
+        if memchr(b' ', left.as_bytes()).is_none() && memchr(b' ', right.as_bytes()).is_none() {
+            Some((left, right))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }

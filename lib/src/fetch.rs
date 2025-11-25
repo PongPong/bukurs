@@ -147,9 +147,9 @@ mod tests {
         #[case] expected_keywords: &str,
     ) {
         let result = parse_html(html).unwrap();
-        assert_eq!(result.title, expected_title);
-        assert_eq!(result.desc, expected_desc);
-        assert_eq!(result.keywords, expected_keywords);
+        assert_eq!(result.title.as_str(), expected_title);
+        assert_eq!(result.desc.as_str(), expected_desc);
+        assert_eq!(result.keywords.as_str(), expected_keywords);
     }
 
     #[test]
@@ -186,7 +186,7 @@ mod tests {
 
         let result = parse_html(html).unwrap();
         // Should get the first one
-        assert_eq!(result.desc, "First description");
+        assert_eq!(result.desc.as_str(), "First description");
     }
 
     #[test]
@@ -232,7 +232,7 @@ mod tests {
         "#;
 
         let result = parse_html(html).unwrap();
-        assert_eq!(result.desc, "Should match");
+        assert_eq!(result.desc.as_str(), "Should match");
     }
 
     #[rstest]
@@ -247,6 +247,6 @@ mod tests {
         );
 
         let result = parse_html(&html).unwrap();
-        assert_eq!(result.title, expected);
+        assert_eq!(result.title.as_str(), expected);
     }
 }

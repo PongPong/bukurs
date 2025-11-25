@@ -154,13 +154,13 @@ Add tags without removing existing ones:
 
 ```bash
 # Add a single tag
-buku update 1 --tag +urgent
+buku update 1 --tag=+urgent
 
 # Add multiple tags
-buku update 1 --tag +urgent,+todo
+buku update 1 --tag=+urgent,+todo
 
 # Add tags to multiple bookmarks
-buku update 1-5 --tag +reviewed
+buku update 1-5 --tag=+reviewed
 ```
 
 #### Remove Tags (`-` prefix)
@@ -168,13 +168,13 @@ Remove specific tags:
 
 ```bash
 # Remove a single tag
-buku update 1 --tag -archived
+buku update 1 --tag=-archived
 
 # Remove multiple tags
-buku update 1 --tag -old,-deprecated
+buku update 1 --tag=-old,-deprecated
 
 # Remove tags from multiple bookmarks
-buku update 1-10 --tag -draft
+buku update 1-10 --tag=-draft
 ```
 
 #### Replace Tags (`~` prefix)
@@ -182,10 +182,10 @@ Replace one tag with another:
 
 ```bash
 # Replace 'todo' with 'done'
-buku update 1 --tag ~todo:done
+buku update 1 --tag=~todo:done
 
 # Replace 'draft' with 'published'
-buku update 1 --tag ~draft:published
+buku update 1 --tag=~draft:published
 ```
 
 #### Combine Operations
@@ -193,10 +193,10 @@ You can combine different tag operations in a single command:
 
 ```bash
 # Add 'urgent', remove 'archived', and replace 'todo' with 'done'
-buku update 1 --tag +urgent,-archived,~todo:done
+buku update 1 --tag=+urgent,-archived,~todo:done
 
 # Works with multiple bookmarks too
-buku update 1-100 --tag +reviewed,-draft
+buku update 1-100 --tag=+reviewed,-draft
 ```
 
 #### Plain Tags (No Prefix)
@@ -204,8 +204,8 @@ Tags without a prefix are added by default:
 
 ```bash
 # These are equivalent
-buku update 1 --tag newtag
-buku update 1 --tag +newtag
+buku update 1 --tag=newtag
+buku update 1 --tag=+newtag
 ```
 
 #### Batch Updates with Single Undo

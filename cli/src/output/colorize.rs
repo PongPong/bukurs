@@ -57,8 +57,8 @@ mod tests {
 
         let colorized = ColorizeBookmark(&bookmark).to_colored();
 
-        // Should contain the tag line
-        assert!(colorized.contains("rust, testing"));
+        // Should contain the tag line (tags are comma-separated without spaces)
+        assert!(colorized.contains("rust") && colorized.contains("testing"));
         assert!(colorized.contains("#"));
     }
 

@@ -1,4 +1,5 @@
 mod cli;
+mod commands;
 mod editor;
 mod fetch_ui;
 mod format;

@@ -1,4 +1,5 @@
 use crate::models::bookmark::Bookmark;
+use crate::utils;
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -8,10 +9,22 @@ pub struct BukuDb {
 }
 
 impl BukuDb {
+    pub fn init_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        let db = Self { conn };
+        db.setup_tables()?;
+        Ok(db)
+    }
+
     pub fn init(db_path: &Path) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        let db = Self { conn };
+        db.setup_tables()?;
+        Ok(db)
+    }
 
-        conn.execute(
+    fn setup_tables(&self) -> Result<()> {
+        self.conn.execute(
             "CREATE TABLE if not exists bookmarks (
                 id integer PRIMARY KEY,
                 URL text NOT NULL UNIQUE,
@@ -23,21 +36,23 @@ impl BukuDb {
             [],
         )?;
 
-        conn.execute(
+        self.conn.execute(
             "CREATE TABLE if not exists undo_log (
                 id integer PRIMARY KEY AUTOINCREMENT,
                 timestamp integer,
                 operation text,
                 bookmark_id integer,
                 data text,
-                batch_id text
+                batch_id text,
+                command_type text,
+                command_data text
             )",
             [],
         )?;
 
         // Migration: Add batch_id column if it doesn't exist (for existing databases)
         let has_batch_id: bool = {
-            let mut stmt = conn.prepare("PRAGMA table_info(undo_log)")?;
+            let mut stmt = self.conn.prepare("PRAGMA table_info(undo_log)")?;
             let rows = stmt.query_map([], |row| {
                 let name: String = row.get(1)?;
                 Ok(name)
@@ -54,15 +69,17 @@ impl BukuDb {
         };
 
         if !has_batch_id {
-            conn.execute("ALTER TABLE undo_log ADD COLUMN batch_id text", [])?;
+            self.conn
+                .execute("ALTER TABLE undo_log ADD COLUMN batch_id text", [])?;
         }
         if cfg!(debug_assertions) {
-            conn.execute("DROP TABLE IF EXISTS bookmarks_fts", [])?;
+            self.conn
+                .execute("DROP TABLE IF EXISTS bookmarks_fts", [])?;
         }
 
         // Create FTS5 virtual table for fast full-text search
         // Using a regular FTS5 table (not content-less) for simplicity and reliability
-        conn.execute(
+        self.conn.execute(
             r#"CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
                 url,
                 metadata,
@@ -75,13 +92,16 @@ impl BukuDb {
 
         if cfg!(debug_assertions) {
             // Drop existing triggers if they exist (to handle upgrades)
-            conn.execute("DROP TRIGGER IF EXISTS bookmarks_ai", [])?;
-            conn.execute("DROP TRIGGER IF EXISTS bookmarks_au", [])?;
-            conn.execute("DROP TRIGGER IF EXISTS bookmarks_ad", [])?;
+            self.conn
+                .execute("DROP TRIGGER IF EXISTS bookmarks_ai", [])?;
+            self.conn
+                .execute("DROP TRIGGER IF EXISTS bookmarks_au", [])?;
+            self.conn
+                .execute("DROP TRIGGER IF EXISTS bookmarks_ad", [])?;
         }
 
         // Trigger to keep FTS5 table in sync on INSERT
-        conn.execute(
+        self.conn.execute(
             "CREATE TRIGGER IF NOT EXISTS bookmarks_ai AFTER INSERT ON bookmarks BEGIN
                 INSERT INTO bookmarks_fts(rowid, url, metadata, tags, desc)
                 VALUES (new.id, new.URL, new.metadata, new.tags, new.desc);
@@ -90,7 +110,7 @@ impl BukuDb {
         )?;
 
         // Trigger to keep FTS5 table in sync on UPDATE
-        conn.execute(
+        self.conn.execute(
             "CREATE TRIGGER IF NOT EXISTS bookmarks_au AFTER UPDATE ON bookmarks BEGIN
                 UPDATE bookmarks_fts
                 SET url = new.URL, metadata = new.metadata, tags = new.tags, desc = new.desc
@@ -100,7 +120,7 @@ impl BukuDb {
         )?;
 
         // Trigger to keep FTS5 table in sync on DELETE
-        conn.execute(
+        self.conn.execute(
             "CREATE TRIGGER IF NOT EXISTS bookmarks_ad AFTER DELETE ON bookmarks BEGIN
                 DELETE FROM bookmarks_fts WHERE rowid = old.id;
             END",
@@ -109,20 +129,22 @@ impl BukuDb {
 
         // Populate FTS5 table if it's empty but bookmarks exist (migration)
         let fts_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM bookmarks_fts", [], |row| row.get(0))?;
+            self.conn
+                .query_row("SELECT COUNT(*) FROM bookmarks_fts", [], |row| row.get(0))?;
         let bookmarks_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
+            self.conn
+                .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
 
         if fts_count == 0 && bookmarks_count > 0 {
             // Migrate existing bookmarks to FTS5
-            conn.execute(
+            self.conn.execute(
                 "INSERT INTO bookmarks_fts(rowid, url, metadata, tags, desc)
                 SELECT id, URL, metadata, tags, desc FROM bookmarks",
                 [],
             )?;
         }
 
-        Ok(BukuDb { conn })
+        Ok(())
     }
 
     /// Helper function to quote and escape keywords for FTS5 queries
@@ -142,6 +164,18 @@ impl BukuDb {
     }
 
     pub fn add_rec(&self, url: &str, title: &str, tags: &str, desc: &str) -> Result<usize> {
+        self.add_rec_with_command(url, title, tags, desc, None, None)
+    }
+
+    pub fn add_rec_with_command(
+        &self,
+        url: &str,
+        title: &str,
+        tags: &str,
+        desc: &str,
+        command_type: Option<&str>,
+        command_data: Option<&str>,
+    ) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
 
         tx.execute(
@@ -150,14 +184,14 @@ impl BukuDb {
         )?;
         let id = tx.last_insert_rowid() as usize;
 
-        // let timestamp = chrono::Utc::now().timestamp();
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
-            .as_secs() as i64; // i64 to match chrono::timestamp type
+            .as_secs() as i64;
+
         tx.execute(
-            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
-            (timestamp, "ADD", id, ""),
+            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data, command_type, command_data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (timestamp, "ADD", id, "", command_type, command_data),
         )?;
 
         tx.commit()?;
@@ -501,7 +535,7 @@ impl BukuDb {
 
         // Build FTS5 query
         let query = if keywords.len() == 1
-            && (keywords[0].contains('"')
+            && (utils::has_char(b'"', keywords[0].as_str())
                 || keywords[0].contains(" OR ")
                 || keywords[0].contains(" AND "))
         {
@@ -602,47 +636,100 @@ impl BukuDb {
         Ok(bookmarks)
     }
 
-    /// Helper function to execute a single undo operation
-    fn execute_undo_operation(
+    /// Internal: Undo ADD operation within existing transaction
+    fn undo_add_impl(tx: &rusqlite::Transaction, bookmark_id: usize) -> Result<()> {
+        tx.execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
+        tx.execute("DELETE FROM bookmarks_fts WHERE rowid = ?1", [bookmark_id])?;
+        Ok(())
+    }
+
+    /// Undo ADD operation - deletes the created bookmark
+    pub fn undo_add(&self, bookmark_id: usize) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        Self::undo_add_impl(&tx, bookmark_id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Internal: Undo UPDATE operation within existing transaction
+    fn undo_update_impl(
         tx: &rusqlite::Transaction,
-        operation_type: &str,
         bookmark_id: usize,
-        data: &str,
+        old_data: &str,
     ) -> Result<()> {
-        match operation_type {
-            "ADD" => {
-                tx.execute("DELETE FROM bookmarks WHERE id = ?1", [bookmark_id])?;
-            }
-            "UPDATE" => {
-                if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(data) {
-                    tx.execute(
-                        "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
-                        (
-                            old_bookmark.url,
-                            old_bookmark.title,
-                            old_bookmark.tags,
-                            old_bookmark.description,
-                            bookmark_id,
-                        ),
-                    )?;
-                }
-            }
-            "DELETE" => {
-                if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(data) {
-                    tx.execute(
-                        "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
-                        (
-                            old_bookmark.id,
-                            old_bookmark.url,
-                            old_bookmark.title,
-                            old_bookmark.tags,
-                            old_bookmark.description,
-                        ),
-                    )?;
-                }
-            }
-            _ => {}
+        if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(old_data) {
+            tx.execute(
+                "UPDATE bookmarks SET URL = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE id = ?5",
+                (
+                    &old_bookmark.url,
+                    &old_bookmark.title,
+                    &old_bookmark.tags,
+                    &old_bookmark.description,
+                    bookmark_id,
+                ),
+            )?;
+
+            // Update FTS index
+            tx.execute(
+                "UPDATE bookmarks_fts SET url = ?1, metadata = ?2, tags = ?3, desc = ?4 WHERE rowid = ?5",
+                (
+                    &old_bookmark.url,
+                    &old_bookmark.title,
+                    &old_bookmark.tags,
+                    &old_bookmark.description,
+                    bookmark_id,
+                ),
+            )?;
         }
+        Ok(())
+    }
+
+    /// Undo UPDATE operation - restores previous bookmark state
+    pub fn undo_update(&self, bookmark_id: usize, old_data: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        Self::undo_update_impl(&tx, bookmark_id, old_data)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Internal: Undo DELETE operation within existing transaction
+    fn undo_delete_impl(
+        tx: &rusqlite::Transaction,
+        _bookmark_id: usize,
+        old_data: &str,
+    ) -> Result<()> {
+        if let Ok(old_bookmark) = serde_json::from_str::<Bookmark>(old_data) {
+            tx.execute(
+                "INSERT INTO bookmarks (id, URL, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
+                (
+                    old_bookmark.id,
+                    &old_bookmark.url,
+                    &old_bookmark.title,
+                    &old_bookmark.tags,
+                    &old_bookmark.description,
+                ),
+            )?;
+
+            // Update FTS index
+            tx.execute(
+                "INSERT OR REPLACE INTO bookmarks_fts (rowid, url, metadata, tags, desc) VALUES (?1, ?2, ?3, ?4, ?5)",
+                (
+                    old_bookmark.id,
+                    &old_bookmark.url,
+                    &old_bookmark.title,
+                    &old_bookmark.tags,
+                    &old_bookmark.description,
+                ),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Undo DELETE operation - restores deleted bookmark
+    pub fn undo_delete(&self, bookmark_id: usize, old_data: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        Self::undo_delete_impl(&tx, bookmark_id, old_data)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -678,10 +765,17 @@ impl BukuDb {
                         Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                     })?
                     .collect::<Result<Vec<_>>>()?;
+                drop(stmt);
 
                 // Undo each operation in the batch
                 for (log_entry_id, op_type, bm_id, op_data) in batch_ops {
-                    Self::execute_undo_operation(&tx, &op_type, bm_id, &op_data)?;
+                    // Call internal undo methods with existing transaction
+                    match op_type.as_str() {
+                        "ADD" => Self::undo_add_impl(&tx, bm_id)?,
+                        "UPDATE" => Self::undo_update_impl(&tx, bm_id, &op_data)?,
+                        "DELETE" => Self::undo_delete_impl(&tx, bm_id, &op_data)?,
+                        _ => {}
+                    }
 
                     // Delete this log entry
                     tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_entry_id])?;
@@ -689,11 +783,17 @@ impl BukuDb {
                 }
             } else {
                 // Single operation (no batch_id)
-                Self::execute_undo_operation(&tx, &operation, bookmark_id, &data)?;
+                // Call internal undo methods with existing transaction
+                match operation.as_str() {
+                    "ADD" => Self::undo_add_impl(&tx, bookmark_id)?,
+                    "UPDATE" => Self::undo_update_impl(&tx, bookmark_id, &data)?,
+                    "DELETE" => Self::undo_delete_impl(&tx, bookmark_id, &data)?,
+                    _ => {}
+                }
 
                 // Remove single log entry - get the ID from the original query
                 let mut stmt = tx.prepare("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
-                if let Some(log_id) = stmt.query_row([], |row| row.get::<_, usize>(0)).ok() {
+                if let Ok(log_id) = stmt.query_row([], |row| row.get::<_, usize>(0)) {
                     tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
                 }
                 affected_count = 1;
@@ -1417,5 +1517,265 @@ mod tests {
         assert_eq!(quoted.len(), 2);
         assert_eq!(quoted[0], "tags:\"rust\"");
         assert_eq!(quoted[1], "tags:\"c++\"");
+    }
+
+    // === New Tests for Improved Coverage ===
+
+    /// Test public undo_add method directly (would catch nested transaction bug)
+    #[test]
+    fn test_public_undo_add_method() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Test", ",test,", "Description")
+            .unwrap();
+
+        // Verify bookmark exists
+        assert!(db.get_rec_by_id(id).unwrap().is_some());
+
+        // Call public undo_add directly (not via undo_last)
+        db.undo_add(id).unwrap();
+
+        // Verify bookmark was deleted
+        assert!(db.get_rec_by_id(id).unwrap().is_none());
+    }
+
+    /// Test public undo_update method directly
+    #[test]
+    fn test_public_undo_update_method() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Original", ",test,", "Desc")
+            .unwrap();
+
+        let original = db.get_rec_by_id(id).unwrap().unwrap();
+        let original_json = serde_json::to_string(&original).unwrap();
+
+        // Update the bookmark
+        db.update_rec(id, None, Some("Modified"), None, None, None)
+            .unwrap();
+
+        // Verify it was updated
+        assert_eq!(db.get_rec_by_id(id).unwrap().unwrap().title, "Modified");
+
+        // Call public undo_update directly
+        db.undo_update(id, &original_json).unwrap();
+
+        // Verify it was reverted
+        assert_eq!(db.get_rec_by_id(id).unwrap().unwrap().title, "Original");
+    }
+
+    /// Test public undo_delete method directly
+    #[test]
+    fn test_public_undo_delete_method() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Test", ",test,", "Desc")
+            .unwrap();
+
+        let original = db.get_rec_by_id(id).unwrap().unwrap();
+        let original_json = serde_json::to_string(&original).unwrap();
+
+        // Delete the bookmark
+        db.delete_rec(id).unwrap();
+
+        // Verify it was deleted
+        assert!(db.get_rec_by_id(id).unwrap().is_none());
+
+        // Call public undo_delete directly
+        db.undo_delete(id, &original_json).unwrap();
+
+        // Verify it was restored
+        let restored = db.get_rec_by_id(id).unwrap().unwrap();
+        assert_eq!(restored.url, original.url);
+        assert_eq!(restored.title, original.title);
+    }
+
+    /// Test FTS index consistency after undo_add
+    #[test]
+    fn test_fts_consistency_after_undo_add() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec(
+                "https://rust-lang.org",
+                "Rust Programming",
+                ",rust,",
+                "Learn Rust",
+            )
+            .unwrap();
+
+        // Search should find it
+        let results = db
+            .search(&vec!["rust".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Undo the add
+        db.undo_add(id).unwrap();
+
+        // Search should NOT find it (FTS index updated)
+        let results = db
+            .search(&vec!["rust".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    /// Test FTS index consistency after undo_update
+    #[test]
+    fn test_fts_consistency_after_undo_update() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec(
+                "https://example.com",
+                "Python Tutorial",
+                ",python,",
+                "Learn Python",
+            )
+            .unwrap();
+
+        let original = db.get_rec_by_id(id).unwrap().unwrap();
+        let original_json = serde_json::to_string(&original).unwrap();
+
+        // Update to Rust
+        db.update_rec(
+            id,
+            None,
+            Some("Rust Tutorial"),
+            Some(",rust,"),
+            Some("Learn Rust"),
+            None,
+        )
+        .unwrap();
+
+        // Should find with "rust"
+        let results = db
+            .search(&vec!["rust".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Undo update
+        db.undo_update(id, &original_json).unwrap();
+
+        // Should find with "python" again, not "rust"
+        let results = db
+            .search(&vec!["python".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        let results = db
+            .search(&vec!["rust".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 0);
+    }
+
+    /// Test FTS index consistency after undo_delete
+    #[test]
+    fn test_fts_consistency_after_undo_delete() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec(
+                "https://golang.org",
+                "Go Programming",
+                ",golang,",
+                "Learn Go",
+            )
+            .unwrap();
+
+        // Search should find it
+        let results = db
+            .search(&vec!["golang".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+
+        let original = db.get_rec_by_id(id).unwrap().unwrap();
+        let original_json = serde_json::to_string(&original).unwrap();
+
+        // Delete it
+        db.delete_rec(id).unwrap();
+
+        // Search should NOT find it
+        let results = db
+            .search(&vec!["golang".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 0);
+
+        // Undo delete
+        db.undo_delete(id, &original_json).unwrap();
+
+        // Search should find it again (FTS restored)
+        let results = db
+            .search(&vec!["golang".to_string()], false, false, false)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    /// Test undo with invalid JSON in undo_log data field
+    #[test]
+    fn test_undo_with_invalid_json() {
+        let db = setup_test_db();
+        let id = db
+            .add_rec("https://example.com", "Test", ",test,", "Desc")
+            .unwrap();
+
+        // Manually insert bad undo log entry
+        db.conn.execute(
+            "INSERT INTO undo_log (timestamp, operation, bookmark_id, data) VALUES (?1, ?2, ?3, ?4)",
+            (12345, "UPDATE", id, "invalid json {{{"),
+        ).unwrap();
+
+        // undo_last should handle gracefully (not crash)
+        let result = db.undo_last();
+        assert!(result.is_ok());
+    }
+
+    /// Test command data serialization in undo_log
+    #[test]
+    fn test_command_serialization_in_undo_log() {
+        let db = setup_test_db();
+
+        // Add with command data
+        let command_json = r#"{"url":"https://test.com","tag":["rust"],"title":"Test","comment":null,"offline":false}"#;
+        let id = db
+            .add_rec_with_command(
+                "https://test.com",
+                "Test",
+                ",rust,",
+                "Description",
+                Some("AddCommand"),
+                Some(command_json),
+            )
+            .unwrap();
+
+        // Verify command data was stored
+        let mut stmt = db
+            .conn
+            .prepare("SELECT command_type, command_data FROM undo_log WHERE bookmark_id = ?1")
+            .unwrap();
+
+        let (cmd_type, cmd_data): (Option<String>, Option<String>) = stmt
+            .query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap();
+
+        assert_eq!(cmd_type, Some("AddCommand".to_string()));
+        assert_eq!(cmd_data, Some(command_json.to_string()));
+    }
+
+    /// Test undo_last doesn't create nested transactions
+    #[test]
+    fn test_undo_last_transaction_management() {
+        let db = setup_test_db();
+
+        // Add multiple operations
+        db.add_rec("https://test1.com", "Test 1", ",test,", "Desc")
+            .unwrap();
+        db.add_rec("https://test2.com", "Test 2", ",test,", "Desc")
+            .unwrap();
+        db.add_rec("https://test3.com", "Test 3", ",test,", "Desc")
+            .unwrap();
+
+        // Multiple undo_last calls should all succeed (no nested transaction errors)
+        assert!(db.undo_last().is_ok());
+        assert!(db.undo_last().is_ok());
+        assert!(db.undo_last().is_ok());
+        assert_eq!(db.undo_last().unwrap(), None); // No more to undo
     }
 }
