@@ -1,12 +1,12 @@
+use memchr::memchr;
+use std::collections::HashSet;
+
 /// Tag operation types
 #[derive(Debug, PartialEq, Clone)]
-pub enum TagOp {
-    /// Add a tag (prefix: +)
-    Add(String),
-    /// Remove a tag (prefix: -)
-    Remove(String),
-    /// Replace a tag (format: ~old:new)
-    Replace { old: String, new: String },
+pub enum TagOp<'a> {
+    Add(&'a str),
+    Remove(&'a str),
+    Replace { old: &'a str, new: &'a str },
 }
 
 /// Parse tag operations from command line arguments
@@ -16,7 +16,7 @@ pub enum TagOp {
 /// - `-tag` - Remove tag
 /// - `~old:new` - Replace old tag with new tag
 /// - `tag` - Add tag (no prefix = add)
-pub fn parse_tag_operations(tags: &[String]) -> Vec<TagOp> {
+pub fn parse_tag_operations<'a>(tags: &'a [String]) -> Vec<TagOp<'a>> {
     let mut operations = Vec::new();
     let mut invalid_tags = Vec::new();
     let mut invalid_syntax = Vec::new();
@@ -26,43 +26,56 @@ pub fn parse_tag_operations(tags: &[String]) -> Vec<TagOp> {
             continue;
         }
 
-        if let Some(tag_name) = tag.strip_prefix('+') {
-            if tag_name.contains(' ') {
-                invalid_tags.push(format!("+{}", tag_name));
-            } else {
-                operations.push(TagOp::Add(tag_name.to_string()));
+        let bytes = tag.as_bytes();
+
+        let (op, rest) = match bytes {
+            [b'+', ..] => ('+', &tag[1..]),
+            [b'-', ..] => ('-', &tag[1..]),
+            [b'~', ..] => ('~', &tag[1..]),
+            _ => ('+', tag.as_str()), // default: add
+        };
+
+        // SIMD-accelerated space check
+        let has_space = memchr(b' ', rest.as_bytes()).is_some();
+
+        if has_space {
+            match op {
+                '+' => invalid_tags.push(format!("+{}", rest)),
+                '-' => invalid_tags.push(format!("-{}", rest)),
+                '~' => invalid_tags.push(format!("~{}", rest)),
+                _ => invalid_tags.push(rest.to_string()),
             }
-        } else if let Some(tag_name) = tag.strip_prefix('-') {
-            if tag_name.contains(' ') {
-                invalid_tags.push(format!("-{}", tag_name));
-            } else {
-                operations.push(TagOp::Remove(tag_name.to_string()));
-            }
-        } else if let Some(replace_spec) = tag.strip_prefix('~') {
-            // Format: ~old:new
-            if let Some((old, new)) = replace_spec.split_once(':') {
-                if old.contains(' ') || new.contains(' ') {
-                    invalid_tags.push(format!("~{}", replace_spec));
+            continue;
+        }
+
+        match op {
+            '+' => operations.push(TagOp::Add(rest)),
+
+            '-' => operations.push(TagOp::Remove(rest)),
+
+            '~' => {
+                // SIMD-accelerated ':' search
+                if let Some(pos) = memchr(b':', rest.as_bytes()) {
+                    let (old, new) = rest.split_at(pos);
+                    let new = &new[1..]; // skip ':'
+
+                    if memchr(b' ', old.as_bytes()).is_none()
+                        && memchr(b' ', new.as_bytes()).is_none()
+                    {
+                        operations.push(TagOp::Replace { old, new });
+                    } else {
+                        invalid_tags.push(format!("~{}", rest));
+                    }
                 } else {
-                    operations.push(TagOp::Replace {
-                        old: old.to_string(),
-                        new: new.to_string(),
-                    });
+                    invalid_syntax.push(tag.clone());
                 }
-            } else {
-                invalid_syntax.push(tag.clone());
             }
-        } else {
-            // No prefix = add
-            if tag.contains(' ') {
-                invalid_tags.push(tag.clone());
-            } else {
-                operations.push(TagOp::Add(tag.to_string()));
-            }
+
+            _ => unreachable!(),
         }
     }
 
-    // Print consolidated warnings
+    // consolidated warnings
     if !invalid_tags.is_empty() {
         eprintln!(
             "Warning: The following tags contain spaces and were ignored: {}",
@@ -81,36 +94,47 @@ pub fn parse_tag_operations(tags: &[String]) -> Vec<TagOp> {
 }
 
 /// Apply tag operations to existing tags
-pub fn apply_tag_operations(existing_tags: &str, operations: &[TagOp]) -> String {
-    let mut tags: Vec<String> = if existing_tags.is_empty() {
-        Vec::new()
-    } else {
-        existing_tags
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .collect()
-    };
+pub fn apply_tag_operations<'a>(existing_tags: &'a str, operations: &[TagOp<'a>]) -> String {
+    // Parse existing tags into a Vec for order + Set for fast lookup
+    let mut vec: Vec<&'a str> = Vec::new();
+    let mut set: HashSet<&'a str> = HashSet::new();
 
+    if !existing_tags.is_empty() {
+        for tag in existing_tags.split(',').map(|t| t.trim()) {
+            if !tag.is_empty() && set.insert(tag) {
+                vec.push(tag);
+            }
+        }
+    }
+
+    // Apply operations
     for op in operations {
-        match op {
+        match *op {
             TagOp::Add(tag) => {
-                // Only add if not already present
-                if !tags.contains(tag) {
-                    tags.push(tag.clone());
+                if set.insert(tag) {
+                    vec.push(tag);
                 }
             }
+
             TagOp::Remove(tag) => {
-                tags.retain(|t| t != tag);
+                if set.remove(tag) {
+                    vec.retain(|t| *t != tag);
+                }
             }
+
             TagOp::Replace { old, new } => {
-                if let Some(pos) = tags.iter().position(|t| t == old) {
-                    tags[pos] = new.clone();
+                if set.remove(old) {
+                    set.insert(new);
+
+                    if let Some(pos) = vec.iter().position(|t| *t == old) {
+                        vec[pos] = new;
+                    }
                 }
             }
         }
     }
 
-    tags.join(",")
+    vec.join(",")
 }
 
 #[cfg(test)]
@@ -119,16 +143,16 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case(vec!["+foo"], vec![TagOp::Add("foo".to_string())])]
-    #[case(vec!["-bar"], vec![TagOp::Remove("bar".to_string())])]
-    #[case(vec!["~old:new"], vec![TagOp::Replace { old: "old".to_string(), new: "new".to_string() }])]
-    #[case(vec!["simple"], vec![TagOp::Add("simple".to_string())])]
+    #[case(vec!["+foo"], vec![TagOp::Add("foo")])]
+    #[case(vec!["-bar"], vec![TagOp::Remove("bar")])]
+    #[case(vec!["~old:new"], vec![TagOp::Replace { old: "old", new: "new"}])]
+    #[case(vec!["simple"], vec![TagOp::Add("simple")])]
     #[case(
         vec!["+foo", "-bar", "~old:new"],
         vec![
-            TagOp::Add("foo".to_string()),
-            TagOp::Remove("bar".to_string()),
-            TagOp::Replace { old: "old".to_string(), new: "new".to_string() }
+            TagOp::Add("foo"),
+            TagOp::Remove("bar"),
+            TagOp::Replace { old: "old", new: "new" }
         ]
     )]
     fn test_parse_tag_operations(#[case] input: Vec<&str>, #[case] expected: Vec<TagOp>) {
@@ -155,7 +179,7 @@ mod tests {
             "valid".to_string(),
         ];
         let result = parse_tag_operations(&input);
-        assert_eq!(result, vec![TagOp::Add("valid".to_string())]);
+        assert_eq!(result, vec![TagOp::Add("valid")]);
     }
 
     #[test]
@@ -166,11 +190,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case("", vec![TagOp::Add("new".to_string())], "new")]
-    #[case("existing", vec![TagOp::Add("new".to_string())], "existing,new")]
-    #[case("foo,bar", vec![TagOp::Remove("bar".to_string())], "foo")]
-    #[case("foo,bar,baz", vec![TagOp::Replace { old: "bar".to_string(), new: "qux".to_string() }], "foo,qux,baz")]
-    #[case("foo", vec![TagOp::Add("foo".to_string())], "foo")] // Duplicate add should not create duplicate
+    #[case("", vec![TagOp::Add("new")], "new")]
+    #[case("existing", vec![TagOp::Add("new")], "existing,new")]
+    #[case("foo,bar", vec![TagOp::Remove("bar")], "foo")]
+    #[case("foo,bar,baz", vec![TagOp::Replace { old: "bar", new: "qux"}], "foo,qux,baz")]
+    #[case("foo", vec![TagOp::Add("foo")], "foo")] // Duplicate add should not create duplicate
     fn test_apply_tag_operations(
         #[case] existing: &str,
         #[case] ops: Vec<TagOp>,
@@ -184,11 +208,11 @@ mod tests {
     fn test_apply_combined_operations() {
         let existing = "rust,tech,old";
         let ops = vec![
-            TagOp::Add("new".to_string()),
-            TagOp::Remove("tech".to_string()),
+            TagOp::Add("new"),
+            TagOp::Remove("tech"),
             TagOp::Replace {
-                old: "old".to_string(),
-                new: "fresh".to_string(),
+                old: "old",
+                new: "fresh",
             },
         ];
         let result = apply_tag_operations(existing, &ops);
@@ -198,7 +222,7 @@ mod tests {
     #[test]
     fn test_remove_nonexistent_tag() {
         let existing = "foo,bar";
-        let ops = vec![TagOp::Remove("baz".to_string())];
+        let ops = vec![TagOp::Remove("baz")];
         let result = apply_tag_operations(existing, &ops);
         assert_eq!(result, "foo,bar");
     }
@@ -207,8 +231,8 @@ mod tests {
     fn test_replace_nonexistent_tag() {
         let existing = "foo,bar";
         let ops = vec![TagOp::Replace {
-            old: "baz".to_string(),
-            new: "qux".to_string(),
+            old: "baz",
+            new: "qux",
         }];
         let result = apply_tag_operations(existing, &ops);
         assert_eq!(result, "foo,bar"); // No change

@@ -208,6 +208,7 @@ dependencies = [
  "env_logger",
  "indicatif",
  "log",
+ "memchr",
  "open",
  "owo-colors",
  "rpassword",
