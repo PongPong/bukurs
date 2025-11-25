@@ -1,5 +1,6 @@
 use crate::db::BukuDb;
 use crate::models::bookmark::Bookmark;
+use crate::utils;
 
 /// Selection modes supported by the application
 #[derive(Debug, Clone, PartialEq)]
@@ -24,7 +25,7 @@ pub struct BookmarkSelection {
 
 /// Check if input looks like an ID or range (numeric), not a keyword
 pub fn is_id_or_range(input: &str) -> bool {
-    let input = input.trim();
+    let input = utils::trim_both_simd(input);
 
     // Wildcard is considered ID-like
     if input == "*" {
@@ -65,7 +66,7 @@ pub fn parse_ranges(
     let all_ids: Vec<usize> = all_records.iter().map(|b| b.id).collect();
 
     for input in inputs {
-        let input = input.trim();
+        let input = utils::trim_both_simd(input);
 
         if input == "*" {
             // Wildcard - return all IDs

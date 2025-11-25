@@ -1,3 +1,4 @@
+use bukurs::utils;
 use memchr::memchr;
 use std::collections::HashSet;
 
@@ -100,7 +101,7 @@ pub fn apply_tag_operations<'a>(existing_tags: &'a str, operations: &[TagOp<'a>]
     let mut set: HashSet<&'a str> = HashSet::new();
 
     if !existing_tags.is_empty() {
-        for tag in existing_tags.split(',').map(|t| t.trim()) {
+        for tag in existing_tags.split(',').map(|t| utils::trim_both_simd(t)) {
             if !tag.is_empty() && set.insert(tag) {
                 vec.push(tag);
             }

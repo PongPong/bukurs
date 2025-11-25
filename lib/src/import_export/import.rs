@@ -1,6 +1,7 @@
 use crate::db::BukuDb;
 use std::error::Error;
 use std::path::Path;
+use crate::utils;
 
 /// Trait for importing bookmarks from different formats
 pub trait BookmarkImporter {
@@ -28,7 +29,7 @@ impl BookmarkImporter for HtmlImporter {
                     // H3 tags represent folder names
                     "H3" | "h3" => {
                         if let Some(folder_name) =
-                            tag.inner_text(parser).as_ref().trim().to_string().into()
+                            utils::trim_both_simd(tag.inner_text(parser).as_ref()).to_string().into()
                         {
                             if !folder_name.is_empty() {
                                 folder_stack.push(folder_name);
@@ -54,7 +55,7 @@ impl BookmarkImporter for HtmlImporter {
                                 continue;
                             }
 
-                            let title = tag.inner_text(parser).as_ref().trim().to_string();
+                            let title = utils::trim_both_simd(tag.inner_text(parser).as_ref()).to_string();
 
                             // Extract tags from TAGS attribute or use folder path
                             let tags = if let Some(tags_attr) = tag

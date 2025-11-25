@@ -1,4 +1,5 @@
 use bukurs::models::bookmark::Bookmark;
+use bukurs::utils;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -123,51 +124,6 @@ fn build_editor_command(editor: &str, file_path: &str) -> Command {
     }
 }
 
-#[inline]
-fn trim_start_simd(s: &str) -> &str {
-    let bytes = s.as_bytes();
-
-    if bytes.is_empty() || (bytes[0] != b' ' && bytes[0] != b'\t') {
-        return s;
-    }
-
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b != b' ' && b != b'\t' {
-            return &s[i..];
-        }
-        i += 1;
-    }
-
-    ""
-}
-
-#[inline]
-fn trim_end_simd(s: &str) -> &str {
-    let bytes = s.as_bytes();
-
-    if bytes.is_empty() {
-        return s;
-    }
-
-    let mut end = bytes.len();
-    while end > 0 {
-        let b = bytes[end - 1];
-        if b != b' ' && b != b'\t' {
-            break;
-        }
-        end -= 1;
-    }
-
-    &s[..end]
-}
-
-#[inline]
-fn trim_both_simd(s: &str) -> &str {
-    trim_end_simd(trim_start_simd(s))
-}
-
 fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> {
     let mut url: &str = "";
     let mut title: &str = "";
@@ -178,7 +134,7 @@ fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> 
     let mut in_description = false;
 
     for line in content.lines() {
-        let trimmed = trim_both_simd(line);
+        let trimmed = utils::trim_both_simd(line);
 
         // Skip comments
         if trimmed.starts_with('#') {
@@ -196,7 +152,7 @@ fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> 
                 if !description_buf.is_empty() {
                     description_buf.push('\n');
                 }
-                description_buf.push_str(trim_start_simd(line));
+                description_buf.push_str(utils::trim_start_simd(line));
                 continue;
             }
 
@@ -207,19 +163,19 @@ fn parse_edited_bookmark(content: &str, original_id: usize) -> Result<Bookmark> 
         // Byte-prefix matching (fast, predictable)
         let b = trimmed.as_bytes();
         if b.starts_with(b"url:") {
-            url = trim_both_simd(&trimmed[4..]);
+            url = utils::trim_both_simd(&trimmed[4..]);
             continue;
         }
         if b.starts_with(b"title:") {
-            title = trim_both_simd(&trimmed[6..]);
+            title = utils::trim_both_simd(&trimmed[6..]);
             continue;
         }
         if b.starts_with(b"tags:") {
-            tags = trim_both_simd(&trimmed[5..]);
+            tags = utils::trim_both_simd(&trimmed[5..]);
             continue;
         }
         if b.starts_with(b"description:") {
-            let rest = trim_both_simd(&trimmed[12..]);
+            let rest = utils::trim_both_simd(&trimmed[12..]);
 
             // Inline description: description: something
             if !rest.is_empty() && rest != "|" {
