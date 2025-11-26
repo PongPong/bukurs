@@ -485,7 +485,8 @@ impl BukuDb {
                         row.get::<_, Option<usize>>(4)?,
                         row.get::<_, i32>(5)?,
                     ))
-                }).ok()
+                })
+                .ok()
             };
 
             // Log undo with batch_id
@@ -597,7 +598,8 @@ impl BukuDb {
                         row.get::<_, Option<usize>>(4)?,
                         row.get::<_, i32>(5)?,
                     ))
-                }).ok()
+                })
+                .ok()
             };
 
             // Log undo with batch_id
@@ -746,7 +748,8 @@ impl BukuDb {
                         row.get::<_, Option<usize>>(4)?,
                         row.get::<_, i32>(5)?,
                     ))
-                }).ok()
+                })
+                .ok()
             };
 
             if let Some((url, title, tags, desc, parent_id, flags)) = bookmark_data {
@@ -947,8 +950,7 @@ impl BukuDb {
                 drop(stmt);
 
                 // Create command objects and execute undo for each operation
-                for (log_entry_id, data) in batch_ops
-                {
+                for (log_entry_id, data) in batch_ops {
                     if let Some(command) = UndoCommand::from_undo_log(&data) {
                         command.undo(self)?;
                     }
@@ -965,20 +967,18 @@ impl BukuDb {
                      FROM undo_log ORDER BY id DESC LIMIT 1",
                 )?;
 
-                if let Ok(data) = stmt
-                    .query_row([], |row| {
-                        Ok(UndoLogData {
-                            operation: row.get(0)?,
-                            bookmark_id: row.get(1)?,
-                            url: row.get(2)?,
-                            title: row.get(3)?,
-                            tags: row.get(4)?,
-                            desc: row.get(5)?,
-                            parent_id: row.get(6)?,
-                            flags: row.get(7)?,
-                        })
+                if let Ok(data) = stmt.query_row([], |row| {
+                    Ok(UndoLogData {
+                        operation: row.get(0)?,
+                        bookmark_id: row.get(1)?,
+                        url: row.get(2)?,
+                        title: row.get(3)?,
+                        tags: row.get(4)?,
+                        desc: row.get(5)?,
+                        parent_id: row.get(6)?,
+                        flags: row.get(7)?,
                     })
-                {
+                }) {
                     // Create command object and execute undo
                     if let Some(command) = UndoCommand::from_undo_log(&data) {
                         command.undo(self)?;
