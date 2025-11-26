@@ -24,6 +24,7 @@ strs_tools = { version = "0.37.0", default-features = false, features = ["string
 simd-json = "0.17.0"
 uuid = { version = "1.18.1", features = ["v4"] }
 memchr = "2.7.6"
+num_cpus = "1.16"
 
 
 [dev-dependencies]

@@ -250,32 +250,57 @@ pub struct ChromeImporter;
 
 impl super::import::BookmarkImporter for ChromeImporter {
     fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
-        let mut json_content = fs::read(path)?;
-        let chrome_data: ChromeBookmarkFile = simd_json::serde::from_slice(&mut json_content)?;
-
-        let mut imported_count = 0;
-
-        // Import from bookmark bar
-        imported_count +=
-            import_chrome_folder(db, &chrome_data.roots.bookmark_bar, "bookmark_bar")?;
-
-        // Import from other bookmarks
-        imported_count += import_chrome_folder(db, &chrome_data.roots.other, "other")?;
-
-        // Import from synced (if exists)
-        if let Some(ref synced) = chrome_data.roots.synced {
-            imported_count += import_chrome_folder(db, synced, "synced")?;
-        }
-
-        Ok(imported_count)
+        import_chrome_with_progress(db, path, |_url| {})
     }
 }
 
-fn import_chrome_folder(
+fn import_chrome_with_progress<F>(
+    db: &BukuDb,
+    path: &Path,
+    mut progress_callback: F,
+) -> Result<usize, Box<dyn Error>>
+where
+    F: FnMut(&str),
+{
+    let mut json_content = fs::read(path)?;
+    let chrome_data: ChromeBookmarkFile = simd_json::serde::from_slice(&mut json_content)?;
+
+    let mut imported_count = 0;
+
+    // Import from bookmark bar
+    imported_count += import_chrome_folder_with_progress(
+        db,
+        &chrome_data.roots.bookmark_bar,
+        "bookmark_bar",
+        &mut progress_callback,
+    )?;
+
+    // Import from other bookmarks
+    imported_count += import_chrome_folder_with_progress(
+        db,
+        &chrome_data.roots.other,
+        "other",
+        &mut progress_callback,
+    )?;
+
+    // Import from synced (if exists)
+    if let Some(ref synced) = chrome_data.roots.synced {
+        imported_count +=
+            import_chrome_folder_with_progress(db, synced, "synced", &mut progress_callback)?;
+    }
+
+    Ok(imported_count)
+}
+
+fn import_chrome_folder_with_progress<F>(
     db: &BukuDb,
     folder: &ChromeBookmark,
     parent_tags: &str,
-) -> Result<usize, Box<dyn Error>> {
+    progress_callback: &mut F,
+) -> Result<usize, Box<dyn Error>>
+where
+    F: FnMut(&str),
+{
     let mut count = 0;
 
     if let Some(ref children) = folder.children {
@@ -283,8 +308,9 @@ fn import_chrome_folder(
             match child.node_type.as_str() {
                 "url" => {
                     if let (Some(ref url), Some(ref name)) = (&child.url, &child.name) {
+                        progress_callback(url);
                         let tags = format!(",{},", parent_tags);
-                        match db.add_rec(url, name, &tags, "") {
+                        match db.add_rec(url, name, &tags, "", None) {
                             Ok(_) => count += 1,
                             Err(rusqlite::Error::SqliteFailure(err, _))
                                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -299,7 +325,12 @@ fn import_chrome_folder(
                 "folder" => {
                     if let Some(ref name) = child.name {
                         let new_tags = format!("{},{}", parent_tags, name);
-                        count += import_chrome_folder(db, child, &new_tags)?;
+                        count += import_chrome_folder_with_progress(
+                            db,
+                            child,
+                            &new_tags,
+                            progress_callback,
+                        )?;
                     }
                 }
                 _ => {}
@@ -315,38 +346,51 @@ pub struct FirefoxImporter;
 
 impl super::import::BookmarkImporter for FirefoxImporter {
     fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
-        let conn = rusqlite::Connection::open(path)?;
-
-        let mut stmt = conn.prepare(
-            "SELECT moz_places.url, moz_bookmarks.title
-             FROM moz_bookmarks
-             JOIN moz_places ON moz_bookmarks.fk = moz_places.id
-             WHERE moz_bookmarks.type = 1 AND moz_places.url IS NOT NULL",
-        )?;
-
-        let bookmarks = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })?;
-
-        let mut count = 0;
-        for bookmark_result in bookmarks {
-            let (url, title_opt) = bookmark_result?;
-            let title = title_opt.unwrap_or_else(|| url.clone());
-
-            match db.add_rec(&url, &title, ",firefox,", "") {
-                Ok(_) => count += 1,
-                Err(rusqlite::Error::SqliteFailure(err, _))
-                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-                {
-                    // Skip duplicates
-                    continue;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-
-        Ok(count)
+        import_firefox_with_progress(db, path, |_url| {})
     }
+}
+
+fn import_firefox_with_progress<F>(
+    db: &BukuDb,
+    path: &Path,
+    mut progress_callback: F,
+) -> Result<usize, Box<dyn Error>>
+where
+    F: FnMut(&str),
+{
+    let conn = rusqlite::Connection::open(path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT moz_places.url, moz_bookmarks.title
+         FROM moz_bookmarks
+         JOIN moz_places ON moz_bookmarks.fk = moz_places.id
+         WHERE moz_bookmarks.type = 1 AND moz_places.url IS NOT NULL",
+    )?;
+
+    let bookmarks = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+
+    let mut count = 0;
+    for bookmark_result in bookmarks {
+        let (url, title_opt) = bookmark_result?;
+        let title = title_opt.unwrap_or_else(|| url.clone());
+
+        progress_callback(&url);
+
+        match db.add_rec(&url, &title, ",firefox,", "", None) {
+            Ok(_) => count += 1,
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                // Skip duplicates
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(count)
 }
 
 /// Import bookmarks directly from Chrome JSON file
@@ -363,13 +407,34 @@ pub fn import_from_firefox(db: &BukuDb, places_path: &Path) -> Result<usize, Box
 
 /// Auto-import from all detected browsers
 pub fn auto_import_all(db: &BukuDb) -> Result<usize, Box<dyn Error>> {
+    auto_import_all_with_progress(db, |_profile, _current, _total, _url| {})
+}
+
+/// Auto-import from all detected browsers with progress callback
+/// The progress_callback receives: (profile, current_profile_idx, total_profiles, current_url)
+pub fn auto_import_all_with_progress<F>(
+    db: &BukuDb,
+    mut progress_callback: F,
+) -> Result<usize, Box<dyn Error>>
+where
+    F: FnMut(&BrowserProfile, usize, usize, Option<&str>),
+{
     let profiles = detect_browsers();
     let mut total_count = 0;
+    let total_profiles = profiles.len();
 
-    for profile in profiles {
+    for (idx, profile) in profiles.iter().enumerate() {
+        progress_callback(profile, idx, total_profiles, None);
+
         let count = match profile.browser {
-            BrowserType::Chrome | BrowserType::Edge => import_from_chrome(db, &profile.path)?,
-            BrowserType::Firefox => import_from_firefox(db, &profile.path)?,
+            BrowserType::Chrome | BrowserType::Edge => {
+                import_chrome_with_progress(db, &profile.path, |url| {
+                    progress_callback(profile, idx, total_profiles, Some(url));
+                })?
+            }
+            BrowserType::Firefox => import_firefox_with_progress(db, &profile.path, |url| {
+                progress_callback(profile, idx, total_profiles, Some(url));
+            })?,
             BrowserType::Safari => {
                 // Safari uses plist format - not implemented yet
                 0
@@ -397,6 +462,23 @@ pub fn import_from_selected_browsers(
     db: &BukuDb,
     browser_names: &[String],
 ) -> Result<usize, Box<dyn Error>> {
+    import_from_selected_browsers_with_progress(
+        db,
+        browser_names,
+        |_profile, _current, _total, _url| {},
+    )
+}
+
+/// Import bookmarks from selected browsers with progress callback
+/// The progress_callback receives: (profile, current_profile_idx, total_profiles, current_url)
+pub fn import_from_selected_browsers_with_progress<F>(
+    db: &BukuDb,
+    browser_names: &[String],
+    mut progress_callback: F,
+) -> Result<usize, Box<dyn Error>>
+where
+    F: FnMut(&BrowserProfile, usize, usize, Option<&str>),
+{
     let all_profiles = detect_browsers();
 
     // Parse browser names
@@ -420,10 +502,20 @@ pub fn import_from_selected_browsers(
     }
 
     let mut total_count = 0;
-    for profile in selected_profiles {
+    let total_profiles = selected_profiles.len();
+
+    for (idx, profile) in selected_profiles.iter().enumerate() {
+        progress_callback(profile, idx, total_profiles, None);
+
         let count = match profile.browser {
-            BrowserType::Chrome | BrowserType::Edge => import_from_chrome(db, &profile.path)?,
-            BrowserType::Firefox => import_from_firefox(db, &profile.path)?,
+            BrowserType::Chrome | BrowserType::Edge => {
+                import_chrome_with_progress(db, &profile.path, |url| {
+                    progress_callback(profile, idx, total_profiles, Some(url));
+                })?
+            }
+            BrowserType::Firefox => import_firefox_with_progress(db, &profile.path, |url| {
+                progress_callback(profile, idx, total_profiles, Some(url));
+            })?,
             BrowserType::Safari => {
                 // Safari uses plist format - not implemented yet
                 0
@@ -458,12 +550,27 @@ mod tests {
 
     #[test]
     fn test_browser_type_from_str() {
-        assert_eq!(BrowserType::from_string("chrome"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_string("Chrome"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_string("CHROME"), Some(BrowserType::Chrome));
-        assert_eq!(BrowserType::from_string("firefox"), Some(BrowserType::Firefox));
+        assert_eq!(
+            BrowserType::from_string("chrome"),
+            Some(BrowserType::Chrome)
+        );
+        assert_eq!(
+            BrowserType::from_string("Chrome"),
+            Some(BrowserType::Chrome)
+        );
+        assert_eq!(
+            BrowserType::from_string("CHROME"),
+            Some(BrowserType::Chrome)
+        );
+        assert_eq!(
+            BrowserType::from_string("firefox"),
+            Some(BrowserType::Firefox)
+        );
         assert_eq!(BrowserType::from_string("edge"), Some(BrowserType::Edge));
-        assert_eq!(BrowserType::from_string("safari"), Some(BrowserType::Safari));
+        assert_eq!(
+            BrowserType::from_string("safari"),
+            Some(BrowserType::Safari)
+        );
         assert_eq!(BrowserType::from_string("invalid"), None);
     }
 

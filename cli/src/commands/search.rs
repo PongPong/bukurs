@@ -84,10 +84,11 @@ mod tests {
                 "Rust Language",
                 "rust,lang",
                 "Programming",
+                None,
             )
             .expect("Add failed");
         env.db
-            .add_rec("http://example.com", "Example", "example", "Test")
+            .add_rec("http://example.com", "Example", "example", "Test", None)
             .expect("Add failed");
 
         let cmd = SearchCommand {

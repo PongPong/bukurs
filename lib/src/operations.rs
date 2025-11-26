@@ -179,15 +179,17 @@ pub fn execute_delete(
     operation: &BookmarkSelection,
     db: &BukuDb,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    // Delete in reverse order to maintain indices
-    let mut sorted_ids = operation.selected_ids.clone();
-    sorted_ids.sort_by(|a, b| b.cmp(a)); // Sort descending
-
-    for id in &sorted_ids {
-        db.delete_rec(*id)?;
+    // For multiple bookmarks, use batch delete to enable batch undo
+    if operation.selected_ids.len() > 1 {
+        let count = db.delete_rec_batch(&operation.selected_ids)?;
+        Ok(count)
+    } else if operation.selected_ids.len() == 1 {
+        // For single bookmark, use regular delete
+        db.delete_rec(operation.selected_ids[0])?;
+        Ok(1)
+    } else {
+        Ok(0)
     }
-
-    Ok(sorted_ids.len())
 }
 
 #[cfg(test)]

@@ -9,12 +9,17 @@ pub struct Config {
     /// Custom user-agent string for HTTP requests
     #[serde(default = "default_user_agent")]
     pub user_agent: String,
+
+    /// Number of threads for parallel bookmark imports
+    #[serde(default = "default_import_threads")]
+    pub import_threads: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             user_agent: default_user_agent(),
+            import_threads: default_import_threads(),
         }
     }
 }
@@ -24,6 +29,11 @@ fn default_user_agent() -> String {
      AppleWebKit/605.1.15 (KHTML, like Gecko) \
      Version/18.5 Safari/605.1.15"
         .to_string()
+}
+
+fn default_import_threads() -> usize {
+    // Use number of CPUs, but cap at 8 for reasonable resource usage
+    num_cpus::get().min(8)
 }
 
 impl Config {
@@ -93,6 +103,7 @@ mod tests {
 
         let original = Config {
             user_agent: "Custom User Agent".to_string(),
+            import_threads: 4,
         };
 
         original.save_to_path(config_path).unwrap();

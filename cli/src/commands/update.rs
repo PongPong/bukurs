@@ -4,6 +4,7 @@ use crate::fetch_ui::fetch_with_spinner;
 use crate::tag_ops::{apply_tag_operations, parse_tag_operations};
 use bukurs::operations;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
@@ -71,77 +72,79 @@ impl BukuCommand for UpdateCommand {
             let tag_operations = self.tag.as_ref().map(|tags| parse_tag_operations(tags));
 
             if bookmarks.len() > 1 {
-                // Batch update mode
-                if tag_operations.is_some() {
-                    // Individual updates for tag operations
-                    let mut success_count = 0;
-                    let mut failed_count = 0;
+                // Batch update mode with parallel processing and progress bar
+                eprintln!("Updating {} bookmark(s)...", bookmarks.len());
 
-                    for bookmark in &bookmarks {
-                        let final_tags = if let Some(ref ops) = tag_operations {
-                            let new_tags = apply_tag_operations(&bookmark.tags, ops);
-                            Some(new_tags)
-                        } else {
-                            None
-                        };
+                let multi = MultiProgress::new();
+                let pb = multi.add(ProgressBar::new(bookmarks.len() as u64));
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template("{msg} [{bar:40.cyan/blue}] {pos}/{len}")
+                        .unwrap()
+                        .progress_chars("=>-"),
+                );
+                pb.set_message("Processing bookmarks");
 
-                        let tags_ref = final_tags.as_deref();
-
-                        match ctx.db.update_rec(
-                            bookmark.id,
-                            url_ref,
-                            title_str,
-                            tags_ref,
-                            desc_ref,
-                            self.immutable,
-                        ) {
-                            Ok(()) => {
-                                success_count += 1;
-                                eprintln!("✓ Updated bookmark {}", bookmark.id);
+                // Compute updates for each bookmark in parallel
+                let updated_bookmarks: Vec<_> = if tag_operations.is_some() {
+                    // For tag operations, compute final tags for each bookmark in parallel
+                    bookmarks
+                        .par_iter()
+                        .map(|bookmark| {
+                            let mut updated = bookmark.clone();
+                            if let Some(ref ops) = tag_operations {
+                                updated.tags = apply_tag_operations(&bookmark.tags, ops);
                             }
-                            Err(e) => {
-                                failed_count += 1;
-                                if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                    if err.extended_code == 2067 {
-                                        eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
-                                    } else {
-                                        eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                                    }
-                                } else {
-                                    eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
-                                }
-                            }
-                        }
-                    }
-
-                    eprintln!();
-                    if success_count > 0 {
-                        eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
-                    }
-                    if failed_count > 0 {
-                        eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
-                    }
+                            pb.inc(1);
+                            updated
+                        })
+                        .collect()
                 } else {
-                    // Efficient batch update
-                    match ctx.db.update_rec_batch(
+                    // No tag operations, just clone in parallel
+                    bookmarks
+                        .par_iter()
+                        .map(|bookmark| {
+                            pb.inc(1);
+                            bookmark.clone()
+                        })
+                        .collect()
+                };
+
+                pb.finish_and_clear();
+
+                // Now perform the batch update in a single transaction
+                let result = if tag_operations.is_some() {
+                    ctx.db.update_rec_batch_with_tags(
+                        &updated_bookmarks,
+                        url_ref,
+                        title_str,
+                        desc_ref,
+                        self.immutable,
+                    )
+                } else {
+                    ctx.db.update_rec_batch(
                         &bookmarks,
                         url_ref,
                         title_str,
                         None,
                         desc_ref,
                         self.immutable,
-                    ) {
-                        Ok((success_count, _failed_count)) => {
-                            eprintln!();
-                            eprintln!(
-                                "✓ Successfully updated {} bookmark(s) in batch",
-                                success_count
-                            );
+                    )
+                };
+
+                match result {
+                    Ok((success_count, failed_count)) => {
+                        eprintln!();
+                        if success_count > 0 {
+                            eprintln!("✓ Successfully updated {} bookmark(s)", success_count);
                         }
-                        Err(e) => {
-                            eprintln!("✗ Batch update failed: {}", e);
-                            eprintln!("All changes have been rolled back.");
+                        if failed_count > 0 {
+                            eprintln!("✗ Failed to update {} bookmark(s)", failed_count);
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("✗ Batch update failed: {}", e);
+                        eprintln!("All changes have been rolled back.");
                     }
                 }
             } else {
@@ -157,20 +160,21 @@ impl BukuCommand for UpdateCommand {
 
                 let tags_ref = final_tags.as_deref();
 
-                match ctx.db.update_rec(
+                match ctx.db.update_rec_partial(
                     bookmark.id,
                     url_ref,
                     title_str,
                     tags_ref,
                     desc_ref,
-                    self.immutable,
+                    None, // parent_id
                 ) {
                     Ok(()) => {
                         eprintln!("✓ Updated bookmark {}", bookmark.id);
                     }
                     Err(e) => {
                         if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                            if err.extended_code == 2067 {
+                            // SQLITE_CONSTRAINT_UNIQUE = 2067
+                            if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
                                 eprintln!("✗ Bookmark {}: URL already exists", bookmark.id);
                             } else {
                                 eprintln!("✗ Bookmark {}: {}", bookmark.id, e);
@@ -222,10 +226,14 @@ impl BukuCommand for UpdateCommand {
                             None
                         };
 
-                        match ctx
-                            .db
-                            .update_rec(bookmark.id, None, new_title, None, new_desc, None)
-                        {
+                        match ctx.db.update_rec_partial(
+                            bookmark.id,
+                            None,
+                            new_title,
+                            None,
+                            new_desc,
+                            None,
+                        ) {
                             Ok(()) => success_count += 1,
                             Err(_) => {
                                 failed_count += 1;
@@ -313,7 +321,13 @@ mod tests {
         // Add a bookmark first
         let id = env
             .db
-            .add_rec("http://example.com", "Old Title", "old,tags", "Old Desc")
+            .add_rec(
+                "http://example.com",
+                "Old Title",
+                "old,tags",
+                "Old Desc",
+                None,
+            )
             .expect("Add failed");
 
         let cmd = UpdateCommand {

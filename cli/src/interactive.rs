@@ -118,7 +118,7 @@ fn handle_edit(db: &BukuDb, parts: &[&str]) -> Result<(), Box<dyn Error>> {
     };
 
     // Update the database
-    match db.update_rec(
+    match db.update_rec_partial(
         bookmark_id,
         Some(&edited.url),
         Some(&edited.title),
@@ -131,8 +131,9 @@ fn handle_edit(db: &BukuDb, parts: &[&str]) -> Result<(), Box<dyn Error>> {
         }
         Err(e) => {
             if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                if err.extended_code == 2067 {
-                    println!("Error: A bookmark with URL '{}' already exists", edited.url);
+                // SQLITE_CONSTRAINT_UNIQUE = 2067
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
+                    eprintln!("✗ Error: URL '{}' already exists", edited.url);
                     return Ok(());
                 }
             }

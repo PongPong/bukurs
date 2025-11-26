@@ -22,7 +22,7 @@ impl BukuCommand for EditCommand {
 
                 match crate::editor::edit_bookmark(&bookmark) {
                     Ok(edited) => {
-                        match ctx.db.update_rec(
+                        match ctx.db.update_rec_partial(
                             bookmark_id,
                             Some(&edited.url),
                             Some(&edited.title),
@@ -36,7 +36,9 @@ impl BukuCommand for EditCommand {
                             }
                             Err(e) => {
                                 if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                    if err.extended_code == 2067 {
+                                    // SQLITE_CONSTRAINT_UNIQUE = 2067
+                                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                                    {
                                         return Err(Box::new(AppError::DuplicateUrl(
                                             edited.url.clone(),
                                         )));
@@ -58,17 +60,12 @@ impl BukuCommand for EditCommand {
 
                 match crate::editor::edit_new_bookmark() {
                     Ok(new_bookmark) => {
-                        // Serialize command for undo log
-                        let command_json = serde_json::to_string(self)
-                            .map_err(|e| format!("Failed to serialize command: {}", e))?;
-
-                        match ctx.db.add_rec_with_command(
+                        match ctx.db.add_rec(
                             &new_bookmark.url,
                             &new_bookmark.title,
                             &new_bookmark.tags,
                             &new_bookmark.description,
-                            Some("EditCommand"),
-                            Some(&command_json),
+                            None, // parent_id
                         ) {
                             Ok(id) => {
                                 eprintln!("✓ Created new bookmark at index {}", id);
@@ -76,7 +73,9 @@ impl BukuCommand for EditCommand {
                             }
                             Err(e) => {
                                 if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                                    if err.extended_code == 2067 {
+                                    // SQLITE_CONSTRAINT_UNIQUE = 2067
+                                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                                    {
                                         return Err(Box::new(AppError::DuplicateUrl(
                                             new_bookmark.url.clone(),
                                         )));

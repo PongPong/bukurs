@@ -1,5 +1,6 @@
 use super::{AppContext, BukuCommand};
 use bukurs::operations;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::io::{self, Write};
@@ -73,8 +74,28 @@ impl BukuCommand for DeleteCommand {
         };
 
         if confirmed {
-            let count = operations::execute_delete(&operation, ctx.db)?;
-            eprintln!("Deleted {} bookmark(s).", count);
+            // Show progress bar for batch deletes
+            if operation.selected_ids.len() > 1 {
+                let pb = ProgressBar::new(operation.selected_ids.len() as u64);
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template("{msg} [{bar:40.cyan/blue}] {pos}/{len}")
+                        .unwrap()
+                        .progress_chars("=>-"),
+                );
+                pb.set_message("Deleting bookmarks");
+
+                // The actual deletion happens in the database layer
+                let count = operations::execute_delete(&operation, ctx.db)?;
+
+                pb.set_position(count as u64);
+                pb.finish_and_clear();
+
+                eprintln!("Deleted {} bookmark(s).", count);
+            } else {
+                let count = operations::execute_delete(&operation, ctx.db)?;
+                eprintln!("Deleted {} bookmark(s).", count);
+            }
         } else {
             eprintln!("Deletion cancelled.");
         }
@@ -124,7 +145,7 @@ mod tests {
         // Add a bookmark first
         let id = env
             .db
-            .add_rec("http://example.com", "Title", "tags", "Desc")
+            .add_rec("http://example.com", "Title", "tags", "Desc", None)
             .expect("Add failed");
 
         let cmd = DeleteCommand {

@@ -66,7 +66,7 @@ impl BukuCommand for AddCommand {
         };
 
         // Determine final title
-        let final_title: &str = if let Some(t) = self.title.as_ref() {
+        let _final_title: &str = if let Some(t) = self.title.as_ref() {
             t.as_str()
         } else if !fetch_result.title.is_empty() {
             fetch_result.title.as_str()
@@ -75,7 +75,7 @@ impl BukuCommand for AddCommand {
         };
 
         // Determine final description
-        let desc: &str = self
+        let _desc: &str = self
             .comment
             .as_deref()
             .unwrap_or(fetch_result.desc.as_str());
@@ -87,26 +87,24 @@ impl BukuCommand for AddCommand {
             format!(",{},", tags.join(","))
         };
 
-        // Serialize command for undo log
-        let command_json = serde_json::to_string(self)
-            .map_err(|e| format!("Failed to serialize command: {}", e))?;
-
-        // Add to database with command serialization
-        match ctx.db.add_rec_with_command(
-            &fetch_result.url,
-            final_title,
+        // Add to database
+        let id_result = ctx.db.add_rec(
+            &self.url,
+            &self.title.clone().unwrap_or_default(),
             &tags_str,
-            desc,
-            Some("AddCommand"),
-            Some(&command_json),
-        ) {
+            &self.comment.clone().unwrap_or_default(),
+            None, // parent_id
+        );
+
+        match id_result {
             Ok(id) => {
                 eprintln!("Added bookmark at index {}", id);
                 Ok(())
             }
             Err(e) => {
                 if let rusqlite::Error::SqliteFailure(err, _) = &e {
-                    if err.extended_code == 2067 {
+                    // SQLITE_CONSTRAINT_UNIQUE = 2067
+                    if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
                         return Err(Box::new(AppError::DuplicateUrl(self.url.clone())));
                     }
                 }
