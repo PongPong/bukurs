@@ -12,6 +12,7 @@ pub struct AppContext<'a> {
 pub mod add;
 pub mod delete;
 pub mod edit;
+pub mod helpers;
 pub mod import_export;
 pub mod lock_unlock;
 pub mod misc;

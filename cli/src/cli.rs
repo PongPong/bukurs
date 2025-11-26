@@ -330,6 +330,7 @@ pub fn handle_args(
             limit: cli.limit,
             format: cli.format,
             nc: cli.nc,
+            open: cli.open,
         }),
 
         Some(Commands::Tag { tags }) => CommandEnum::Tag(TagCommand {
@@ -337,6 +338,7 @@ pub fn handle_args(
             limit: cli.limit,
             format: cli.format,
             nc: cli.nc,
+            open: cli.open,
         }),
 
         Some(Commands::Lock { iterations }) => CommandEnum::Lock(LockCommand { iterations }),

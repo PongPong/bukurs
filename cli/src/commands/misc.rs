@@ -1,5 +1,4 @@
 use super::{AppContext, BukuCommand};
-use crate::format::OutputFormat;
 use crate::interactive;
 use bukurs::browser;
 use bukurs::error::Result;
@@ -128,27 +127,20 @@ impl BukuCommand for NoCommand {
             return Ok(());
         }
 
-        // Run fuzzy picker on the (possibly filtered) records
+        // Run fuzzy picker on the (possibly filtered) records and handle selection
         let query = if !self.keywords.is_empty() {
             Some(self.keywords.join(" "))
         } else {
             None
         };
 
-        if let Some(selected) = bukurs::fuzzy::run_fuzzy_search(&records, query)? {
-            if self.open {
-                eprintln!("Opening: {}", selected.url);
-                browser::open_url(&selected.url)?;
-            } else {
-                let format: OutputFormat = self
-                    .format
-                    .as_deref()
-                    .map(OutputFormat::from_string)
-                    .unwrap_or(OutputFormat::Colored);
-                let selected = vec![selected];
-                format.print_bookmarks(&selected, self.nc);
-            }
-        }
+        crate::commands::helpers::handle_bookmark_selection(
+            &records,
+            query,
+            self.open,
+            self.format.as_deref(),
+            self.nc,
+        )?;
         Ok(())
     }
 }

@@ -1,5 +1,4 @@
 use super::{AppContext, BukuCommand};
-use crate::format::OutputFormat;
 use bukurs::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +11,7 @@ pub struct SearchCommand {
     pub limit: Option<usize>,
     pub format: Option<String>,
     pub nc: bool,
+    pub open: bool,
 }
 
 impl BukuCommand for SearchCommand {
@@ -20,19 +20,25 @@ impl BukuCommand for SearchCommand {
         eprintln!("Searching for: {:?}", self.keywords);
         let mut records = ctx.db.search(&self.keywords, any, self.deep, self.regex)?;
 
+        if records.is_empty() {
+            eprintln!("No bookmarks found matching the search criteria.");
+            return Ok(());
+        }
+
         // Apply limit if specified
         if let Some(limit) = self.limit {
             let start = records.len().saturating_sub(limit);
             records = records.into_iter().skip(start).collect();
         }
 
-        let format: OutputFormat = self
-            .format
-            .as_deref()
-            .map(OutputFormat::from_string)
-            .unwrap_or(OutputFormat::Colored);
-
-        format.print_bookmarks(&records, self.nc);
+        // Run fuzzy picker on the filtered records and handle selection
+        crate::commands::helpers::handle_bookmark_selection(
+            &records,
+            Some(self.keywords.join(" ")),
+            self.open,
+            self.format.as_deref(),
+            self.nc,
+        )?;
         Ok(())
     }
 }
@@ -76,6 +82,7 @@ mod tests {
     #[case(vec!["rust".to_string()], true)]
     #[case(vec!["example".to_string()], true)]
     #[case(vec!["nonexistent".to_string()], false)]
+    #[ignore = "Requires interactive terminal for fuzzy picker"]
     fn test_search_command(#[case] keywords: Vec<String>, #[case] _should_find: bool) {
         let env = TestEnv::new();
         env.db
@@ -99,12 +106,16 @@ mod tests {
             limit: None,
             format: None,
             nc: true, // No color for tests
+            open: false,
         };
 
         // We can't easily capture stdout/stderr here to verify output,
         // but we can verify it runs without error.
         // Ideally we would refactor handlers to return results or write to a passed writer.
         let result = cmd.execute(&env.ctx());
+        if let Err(e) = &result {
+            eprintln!("Error: {:?}", e);
+        }
         assert!(result.is_ok());
     }
 }
