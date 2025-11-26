@@ -1,6 +1,6 @@
+use bukurs::error::Result;
 use bukurs::fetch;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::error::Error;
 
 /// Fetch metadata with visual spinner feedback
 ///
@@ -9,7 +9,7 @@ use std::error::Error;
 pub fn fetch_with_spinner(
     url: &str,
     user_agent: &str,
-) -> Result<fetch::FetchResult, Box<dyn Error>> {
+) -> Result<fetch::FetchResult> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()
@@ -26,7 +26,7 @@ pub fn fetch_with_spinner(
     match &result {
         Ok(_) => spinner.finish_with_message(format!("✓ {}", url_display)),
         Err(e) => {
-            let error_msg = categorize_error(e.as_ref());
+            let error_msg = categorize_error(e);
             spinner.finish_with_message(format!("✗ {} ({})", url_display, error_msg));
         }
     }
@@ -45,7 +45,7 @@ pub fn truncate_url(url: &str, max_len: usize) -> String {
 }
 
 /// Categorize error for user-friendly display
-pub fn categorize_error(error: &(dyn Error + 'static)) -> &'static str {
+pub fn categorize_error(error: &bukurs::error::BukursError) -> &'static str {
     let error_str = error.to_string();
 
     if error_str.contains("403") {
@@ -101,8 +101,8 @@ mod tests {
     #[case("unexpected error", "fetch error")]
     fn test_categorize_error(#[case] error_msg: &str, #[case] expected: &str) {
         // Create a boxed error for testing
-        let error: Box<dyn Error> = error_msg.into();
-        assert_eq!(categorize_error(error.as_ref()), expected);
+        let error: bukurs::error::BukursError = error_msg.into();
+        assert_eq!(categorize_error(&error), expected);
     }
 
     #[test]
@@ -132,16 +132,16 @@ mod tests {
     #[case("401 authorization required", "unauthorized")]
     #[case("page not found 404", "not found")]
     fn test_categorize_error_case_insensitive(#[case] error_msg: &str, #[case] expected: &str) {
-        let error: Box<dyn Error> = error_msg.into();
-        assert_eq!(categorize_error(error.as_ref()), expected);
+        let error: bukurs::error::BukursError = error_msg.into();
+        assert_eq!(categorize_error(&error), expected);
     }
 
     #[test]
     fn test_categorize_error_priority() {
         // When multiple keywords match, ensure correct priority
-        let error: Box<dyn Error> = "connection timeout occurred".into();
+        let error: bukurs::error::BukursError = "connection timeout occurred".into();
         // "timeout" should take precedence over "connection"
-        assert_eq!(categorize_error(error.as_ref()), "timeout");
+        assert_eq!(categorize_error(&error), "timeout");
     }
 
     // Tests for fetch_with_spinner

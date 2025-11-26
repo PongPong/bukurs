@@ -1,7 +1,6 @@
 use super::{AppContext, BukuCommand};
-use crate::commands::add::AppError;
+use bukurs::error::Result;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditCommand {
@@ -9,7 +8,7 @@ pub struct EditCommand {
 }
 
 impl BukuCommand for EditCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         match self.id {
             Some(bookmark_id) => {
                 // Edit existing bookmark
@@ -39,12 +38,12 @@ impl BukuCommand for EditCommand {
                                     // SQLITE_CONSTRAINT_UNIQUE = 2067
                                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
                                     {
-                                        return Err(Box::new(AppError::DuplicateUrl(
-                                            edited.url.clone(),
-                                        )));
+                                        return Err(bukurs::error::BukursError::InvalidInput(
+                                            format!("Duplicate URL: {}", edited.url)
+                                        ));
                                     }
                                 }
-                                Err(Box::new(AppError::DbError))
+                                Err(bukurs::error::BukursError::Database(e))
                             }
                         }
                     }
@@ -76,12 +75,12 @@ impl BukuCommand for EditCommand {
                                     // SQLITE_CONSTRAINT_UNIQUE = 2067
                                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
                                     {
-                                        return Err(Box::new(AppError::DuplicateUrl(
-                                            new_bookmark.url.clone(),
-                                        )));
+                                        return Err(bukurs::error::BukursError::InvalidInput(
+                                            format!("Duplicate URL: {}", new_bookmark.url)
+                                        ));
                                     }
                                 }
-                                Err(Box::new(AppError::DbError))
+                                Err(bukurs::error::BukursError::Database(e))
                             }
                         }
                     }

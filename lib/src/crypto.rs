@@ -21,7 +21,7 @@ impl BukuCrypt {
         dbfile: &Path,
         encfile: &Path,
         password: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> crate::error::Result<()> {
         let dbhash = Self::get_filehash(dbfile)?;
         let filesize = fs::metadata(dbfile)?.len();
 
@@ -76,7 +76,7 @@ impl BukuCrypt {
         dbfile: &Path,
         encfile: &Path,
         password: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> crate::error::Result<()> {
         let mut infp = File::open(encfile)?;
 
         let mut size_bytes = [0u8; 8];

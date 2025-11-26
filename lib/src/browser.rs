@@ -1,6 +1,5 @@
-use std::error::Error;
 
-pub fn open_url(url: &str) -> Result<(), Box<dyn Error>> {
+pub fn open_url(url: &str) -> crate::error::Result<()> {
     open::that(url)?;
     Ok(())
 }

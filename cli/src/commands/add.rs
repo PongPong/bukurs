@@ -1,24 +1,14 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::fetch_ui::fetch_with_spinner;
 use bukurs::{fetch, utils};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::sync::{Arc, OnceLock};
 
 static EMPTY_STRING: OnceLock<Arc<String>> = OnceLock::new();
 
 fn empty_string() -> Arc<String> {
     EMPTY_STRING.get_or_init(|| Arc::new(String::new())).clone()
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error("Invalid tag name: '{0}' (tags cannot contain spaces)")]
-    InvalidTagName(String),
-    #[error("Duplicate URL: {0}")]
-    DuplicateUrl(String),
-    #[error("Database error")]
-    DbError,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,13 +21,15 @@ pub struct AddCommand {
 }
 
 impl BukuCommand for AddCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let tags = self.tag.as_deref().unwrap_or(&[]);
 
         // Validate tags don't contain spaces
         for t in tags {
             if utils::has_spaces(t) {
-                return Err(Box::new(AppError::InvalidTagName(t.clone())));
+                return Err(bukurs::error::BukursError::InvalidInput(
+                    format!("Invalid tag name: '{}' (tags cannot contain spaces)", t)
+                ));
             }
         }
 
@@ -105,10 +97,12 @@ impl BukuCommand for AddCommand {
                 if let rusqlite::Error::SqliteFailure(err, _) = &e {
                     // SQLITE_CONSTRAINT_UNIQUE = 2067
                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE {
-                        return Err(Box::new(AppError::DuplicateUrl(self.url.clone())));
+                        return Err(bukurs::error::BukursError::InvalidInput(
+                            format!("Duplicate URL: {}", self.url)
+                        ));
                     }
                 }
-                Err(Box::new(AppError::DbError))
+                Err(bukurs::error::BukursError::Database(e))
             }
         }
     }

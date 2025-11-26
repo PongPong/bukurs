@@ -1,4 +1,5 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::cli::get_exe_name;
 use crate::fetch_ui::fetch_with_spinner;
 use crate::tag_ops::{apply_tag_operations, parse_tag_operations};
@@ -6,7 +7,6 @@ use bukurs::operations;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateCommand {
@@ -19,7 +19,7 @@ pub struct UpdateCommand {
 }
 
 impl BukuCommand for UpdateCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let has_edit_options = self.url.is_some()
             || self.tag.is_some()
             || self.title.is_some()

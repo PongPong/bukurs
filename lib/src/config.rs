@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::fs;
 use std::path::Path;
 
@@ -38,7 +37,7 @@ fn default_import_threads() -> usize {
 
 impl Config {
     /// Load configuration from a file path
-    pub fn load_from_path(path: &Path) -> Result<Self, Box<dyn Error>> {
+    pub fn load_from_path(path: &Path) -> crate::error::Result<Self> {
         let contents = fs::read_to_string(path)?;
         let config: Config = serde_yaml::from_str(&contents)?;
         Ok(config)
@@ -67,7 +66,7 @@ impl Config {
     }
 
     /// Save configuration to a file path
-    pub fn save_to_path(&self, path: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn save_to_path(&self, path: &Path) -> crate::error::Result<()> {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -79,7 +78,7 @@ impl Config {
     }
 
     /// Save configuration to default location
-    pub fn save(&self) -> Result<(), Box<dyn Error>> {
+    pub fn save(&self) -> crate::error::Result<()> {
         let config_path = crate::utils::get_config_dir().join("config.yml");
         self.save_to_path(&config_path)
     }

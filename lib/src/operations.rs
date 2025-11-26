@@ -54,7 +54,7 @@ pub fn is_id_or_range(input: &str) -> bool {
 pub fn parse_ranges(
     inputs: &[String],
     db: &BukuDb,
-) -> Result<Vec<usize>, Box<dyn std::error::Error>> {
+) -> Result<Vec<usize>, crate::error::BukursError> {
     let mut ids = Vec::new();
 
     // Get all bookmarks to find valid IDs
@@ -113,7 +113,7 @@ pub fn parse_ranges(
 pub fn resolve_bookmarks(
     inputs: &[String],
     db: &BukuDb,
-) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+) -> crate::error::Result<BookmarkSelection> {
     // Determine selection mode and get IDs
     let (mode, selected_ids) = if inputs.is_empty() {
         // No args → select all bookmarks
@@ -161,7 +161,7 @@ pub fn resolve_bookmarks(
 pub fn prepare_delete(
     ids: &[String],
     db: &BukuDb,
-) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+) -> crate::error::Result<BookmarkSelection> {
     resolve_bookmarks(ids, db)
 }
 
@@ -169,7 +169,7 @@ pub fn prepare_delete(
 pub fn prepare_print(
     ids: &[String],
     db: &BukuDb,
-) -> Result<BookmarkSelection, Box<dyn std::error::Error>> {
+) -> crate::error::Result<BookmarkSelection> {
     resolve_bookmarks(ids, db)
 }
 
@@ -178,7 +178,7 @@ pub fn prepare_print(
 pub fn execute_delete(
     operation: &BookmarkSelection,
     db: &BukuDb,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> crate::error::Result<usize> {
     // For multiple bookmarks, use batch delete to enable batch undo
     if operation.selected_ids.len() > 1 {
         let count = db.delete_rec_batch(&operation.selected_ids)?;

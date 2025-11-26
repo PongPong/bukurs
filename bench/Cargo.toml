@@ -11,3 +11,7 @@ tempfile = "3.10"
 [[bench]]
 name = "benchmark"
 harness = false
+
+[[bench]]
+name = "optimization_benchmark"
+harness = false

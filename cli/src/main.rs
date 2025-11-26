@@ -7,10 +7,10 @@ mod interactive;
 mod output;
 mod tag_ops;
 
-use bukurs::{config, db, utils};
+use bukurs::{config, db, error::Result, utils};
 use clap::Parser;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
     // Initialize logger

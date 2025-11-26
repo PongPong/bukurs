@@ -1,8 +1,8 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use bukurs::operations;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::io::{self, Write};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub struct DeleteCommand {
 }
 
 impl BukuCommand for DeleteCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let operation = operations::prepare_delete(&self.ids, ctx.db)?;
 
         if operation.bookmarks.is_empty() {

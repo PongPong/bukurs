@@ -1,9 +1,9 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::format::OutputFormat;
 use crate::interactive;
 use bukurs::browser;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCommand {
@@ -11,7 +11,7 @@ pub struct OpenCommand {
 }
 
 impl BukuCommand for OpenCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         if self.ids.is_empty() {
             eprintln!("Opening random bookmark (not implemented yet)");
         } else {
@@ -36,7 +36,7 @@ impl BukuCommand for OpenCommand {
 pub struct ShellCommand;
 
 impl BukuCommand for ShellCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         interactive::run(ctx.db)?;
         Ok(())
     }
@@ -48,7 +48,7 @@ pub struct UndoCommand {
 }
 
 impl BukuCommand for UndoCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         if self.count == 0 {
             eprintln!("Error: Count must be at least 1");
             return Err("Invalid count".into());
@@ -112,7 +112,7 @@ pub struct NoCommand {
 }
 
 impl BukuCommand for NoCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         // Get records: FTS5 search if keywords provided, otherwise all
         let records = if !self.keywords.is_empty() {
             eprintln!("Searching for: {:?}", self.keywords);

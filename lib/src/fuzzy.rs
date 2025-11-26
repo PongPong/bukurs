@@ -67,7 +67,7 @@ impl Render<BookmarkItem> for BookmarkRenderer {
 pub fn run_fuzzy_search(
     bookmarks: &[Bookmark],
     _query: Option<String>,
-) -> Result<Option<Bookmark>, Box<dyn std::error::Error>> {
+) -> crate::error::Result<Option<Bookmark>> {
     if bookmarks.is_empty() {
         return Ok(None);
     }
@@ -90,11 +90,51 @@ pub fn run_fuzzy_search(
     }
 
     // Run picker and get selection
-    match picker.pick()? {
-        Some(item) => {
+    match picker.pick() {
+        Ok(Some(item)) => {
             // Look up the full bookmark by ID to avoid cloning all bookmarks upfront
             Ok(bookmarks.iter().find(|b| b.id == item.id).cloned())
         }
-        None => Ok(None),
+        Ok(None) => Ok(None),
+        Err(e) => Err(crate::error::BukursError::FuzzySearch(e.to_string())),
+    }
+}
+
+/// Wrapper for rendering tags in the picker
+struct TagItem {
+    tag: String,
+}
+
+/// Renderer for tag items
+struct TagRenderer;
+
+impl Render<TagItem> for TagRenderer {
+    type Str<'a> = &'a str;
+
+    fn render<'a>(&self, item: &'a TagItem) -> Self::Str<'a> {
+        &item.tag
+    }
+}
+
+/// Run fuzzy search on tags and return the selected tag
+pub fn run_fuzzy_tag_search(tags: &[String]) -> crate::error::Result<Option<String>> {
+    if tags.is_empty() {
+        return Ok(None);
+    }
+
+    // Create picker
+    let mut picker = Picker::new(TagRenderer);
+
+    // Inject all tags
+    let injector = picker.injector();
+    for tag in tags {
+        injector.push(TagItem { tag: tag.clone() });
+    }
+
+    // Run picker and get selection
+    match picker.pick() {
+        Ok(Some(item)) => Ok(Some(item.tag.clone())),
+        Ok(None) => Ok(None),
+        Err(e) => Err(crate::error::BukursError::FuzzySearch(e.to_string())),
     }
 }

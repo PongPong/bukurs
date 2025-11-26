@@ -231,6 +231,12 @@ impl BukuDb {
             [],
         )?;
 
+        // Create index on tags column for better performance when listing/searching tags
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bookmarks_tags ON bookmarks(tags)",
+            [],
+        )?;
+
         // Populate FTS5 table if it's empty but bookmarks exist (migration)
         let fts_count: i64 =
             self.conn
@@ -312,7 +318,7 @@ impl BukuDb {
     pub fn get_rec_by_id(&self, id: usize) -> Result<Option<Bookmark>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
+            .prepare_cached("SELECT URL, metadata, tags, desc FROM bookmarks WHERE id = ?1")?;
         let mut rows = stmt.query([id])?;
 
         if let Some(row) = rows.next()? {
@@ -331,7 +337,7 @@ impl BukuDb {
     pub fn get_rec_all(&self) -> Result<Vec<Bookmark>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, URL, metadata, tags, desc FROM bookmarks")?;
+            .prepare_cached("SELECT id, URL, metadata, tags, desc FROM bookmarks")?;
         let rows = stmt.query_map([], |row| {
             Ok(Bookmark::new(
                 row.get(0)?,
@@ -498,7 +504,7 @@ impl BukuDb {
             // Fetch current state for undo (including parent_id and flags)
             let current = {
                 let mut stmt =
-                    tx.prepare("SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1")?;
+                    tx.prepare_cached("SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1")?;
                 stmt.query_row([bookmark.id], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -611,7 +617,7 @@ impl BukuDb {
             // Fetch current state for undo (including parent_id and flags)
             let current = {
                 let mut stmt =
-                    tx.prepare("SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1")?;
+                    tx.prepare_cached("SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1")?;
                 stmt.query_row([bookmark.id], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -766,7 +772,7 @@ impl BukuDb {
         for &id in ids {
             // Fetch current state for undo within transaction
             let bookmark_data = {
-                let mut stmt = tx.prepare(
+                let mut stmt = tx.prepare_cached(
                     "SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1",
                 )?;
                 stmt.query_row([id], |row| {
@@ -846,7 +852,7 @@ impl BukuDb {
         };
 
         // Query FTS5 table to get matching bookmark IDs (ranked by relevance)
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH ?1 ORDER BY rank",
         )?;
 
@@ -895,7 +901,7 @@ impl BukuDb {
         let query = quoted_tags.join(" OR ");
 
         // Query FTS5 table to get matching bookmark IDs
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH ?1 ORDER BY rank",
         )?;
 
@@ -933,13 +939,47 @@ impl BukuDb {
         Ok(bookmarks)
     }
 
+    /// Get all unique tags from the database
+    /// Returns a sorted list of unique tags (excluding empty tags)
+    pub fn get_all_tags(&self) -> Result<Vec<String>> {
+        // Using the index on tags column for better performance
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT DISTINCT tags FROM bookmarks WHERE tags != ','")?;
+
+        let tags_result: Result<Vec<String>> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>>>();
+
+        let tags_strings = tags_result?;
+
+        // Parse all tag strings and collect unique tags
+        let mut unique_tags = std::collections::HashSet::new();
+
+        for tags_str in tags_strings {
+            // Tags are stored as ",tag1,tag2," - split by comma and filter empty strings
+            for tag in tags_str.split(',') {
+                let trimmed = tag.trim();
+                if !trimmed.is_empty() {
+                    unique_tags.insert(trimmed.to_string());
+                }
+            }
+        }
+
+        // Convert to sorted vector
+        let mut tags_vec: Vec<String> = unique_tags.into_iter().collect();
+        tags_vec.sort();
+
+        Ok(tags_vec)
+    }
+
     /// Undo the last operation or batch of operations
     /// Returns Some((operation_type, count)) on success, None if nothing to undo
     pub fn undo_last(&self) -> Result<Option<(String, usize)>> {
         let tx = self.conn.unchecked_transaction()?;
 
         // Get the most recent undo log entry
-        let mut stmt = tx.prepare(
+        let mut stmt = tx.prepare_cached(
             "SELECT id, operation, bookmark_id, batch_id FROM undo_log ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query([])?;
@@ -1016,7 +1056,7 @@ impl BukuDb {
                 }
 
                 // Remove single log entry - get the ID from the original query
-                let mut stmt = tx.prepare("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
+                let mut stmt = tx.prepare_cached("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
                 if let Ok(log_id) = stmt.query_row([], |row| row.get::<_, usize>(0)) {
                     tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
                 }
@@ -1697,6 +1737,98 @@ mod tests {
             "Should find exactly one bookmark with tag: {:?}",
             tags
         );
+    }
+
+    #[test]
+    fn test_get_all_tags_empty_database() {
+        let db = BukuDb::init_in_memory().unwrap();
+        let tags = db.get_all_tags().unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn test_get_all_tags_single_bookmark() {
+        let db = setup_test_db();
+        db.add_rec("https://test.com", "Test", ",rust,python,", "Desc", None)
+            .unwrap();
+
+        let tags = db.get_all_tags().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags, vec!["python", "rust"]); // Should be sorted
+    }
+
+    #[test]
+    fn test_get_all_tags_multiple_bookmarks() {
+        let db = setup_test_db();
+        db.add_rec("https://a.com", "A", ",rust,web,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://b.com", "B", ",python,rust,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://c.com", "C", ",javascript,web,", "Desc", None)
+            .unwrap();
+
+        let tags = db.get_all_tags().unwrap();
+        assert_eq!(tags.len(), 4);
+        assert_eq!(tags, vec!["javascript", "python", "rust", "web"]); // Sorted and unique
+    }
+
+    #[test]
+    fn test_get_all_tags_duplicates_removed() {
+        let db = setup_test_db();
+        db.add_rec("https://a.com", "A", ",rust,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://b.com", "B", ",rust,python,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://c.com", "C", ",rust,", "Desc", None)
+            .unwrap();
+
+        let tags = db.get_all_tags().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags, vec!["python", "rust"]);
+    }
+
+    #[test]
+    fn test_get_all_tags_special_characters() {
+        let db = setup_test_db();
+        db.add_rec("https://a.com", "A", ",c++,rust,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://b.com", "B", ",tag-name,tag_name,", "Desc", None)
+            .unwrap();
+        db.add_rec("https://c.com", "C", ",test$tag,", "Desc", None)
+            .unwrap();
+
+        let tags = db.get_all_tags().unwrap();
+        assert_eq!(tags.len(), 5);
+        assert_eq!(
+            tags,
+            vec!["c++", "rust", "tag-name", "tag_name", "test$tag"]
+        );
+    }
+
+    #[test]
+    fn test_get_all_tags_ignores_empty() {
+        let db = setup_test_db();
+        // Bookmark with no tags (just the default ",")
+        db.add_rec("https://a.com", "A", ",", "No tags", None)
+            .unwrap();
+        db.add_rec("https://b.com", "B", ",rust,", "Has tags", None)
+            .unwrap();
+
+        let tags = db.get_all_tags().unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags, vec!["rust"]);
+    }
+
+    #[test]
+    fn test_tags_index_exists() {
+        let db = setup_test_db();
+        // Verify that the index on tags column was created
+        let mut stmt = db
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bookmarks_tags'")
+            .unwrap();
+        let index_exists: bool = stmt.exists([]).unwrap();
+        assert!(index_exists, "Index idx_bookmarks_tags should exist");
     }
 
     #[rstest]

@@ -1,7 +1,7 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use bukurs::crypto;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockCommand {
@@ -9,7 +9,7 @@ pub struct LockCommand {
 }
 
 impl BukuCommand for LockCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let password = rpassword::prompt_password("Enter password: ")?;
         let confirm = rpassword::prompt_password("Confirm password: ")?;
         if password != confirm {
@@ -35,7 +35,7 @@ pub struct UnlockCommand {
 }
 
 impl BukuCommand for UnlockCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let password = rpassword::prompt_password("Enter password: ")?;
         let enc_path = if ctx.db_path.extension().is_some_and(|ext| ext == "enc") {
             ctx.db_path.to_path_buf()

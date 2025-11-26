@@ -1,5 +1,5 @@
 use reqwest::blocking::Client;
-use std::{error::Error, sync::Arc};
+use std::sync::Arc;
 use tl::ParserOptions;
 
 #[derive(Debug, PartialEq)]
@@ -14,7 +14,7 @@ const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) \
     Version/18.5 Safari/605.1.15";
 
-pub fn fetch_data(url: &str, user_agent: Option<&str>) -> Result<FetchResult, Box<dyn Error>> {
+pub fn fetch_data(url: &str, user_agent: Option<&str>) -> crate::error::Result<FetchResult> {
     let ua = user_agent.unwrap_or(USER_AGENT);
     let client = Client::builder().user_agent(ua).build()?;
     let resp = client.get(url).send()?;
@@ -49,7 +49,7 @@ pub fn fetch_data(url: &str, user_agent: Option<&str>) -> Result<FetchResult, Bo
 }
 
 /// Parse HTML content and extract metadata
-pub fn parse_html(html: &str) -> Result<FetchResult, Box<dyn Error>> {
+pub fn parse_html(html: &str) -> crate::error::Result<FetchResult> {
     let dom = tl::parse(html, ParserOptions::default())?;
     let parser = dom.parser();
 

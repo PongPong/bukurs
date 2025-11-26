@@ -1,10 +1,11 @@
 use bukurs::db::BukuDb;
+use bukurs::error::Result;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
-use std::error::Error;
 
-pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
-    let mut rl = DefaultEditor::new()?;
+pub fn run(db: &BukuDb) -> Result<()> {
+    let mut rl = DefaultEditor::new()
+        .map_err(|e| bukurs::error::BukursError::Other(e.to_string()))?;
 
     loop {
         let readline = rl.readline("buku (? for help) ");
@@ -14,7 +15,8 @@ pub fn run(db: &BukuDb) -> Result<(), Box<dyn Error>> {
                 if line.is_empty() {
                     continue;
                 }
-                rl.add_history_entry(line)?;
+                rl.add_history_entry(line)
+                    .map_err(|e| bukurs::error::BukursError::Other(e.to_string()))?;
 
                 match line {
                     "q" | "quit" | "exit" => break,
@@ -52,7 +54,7 @@ PROMPT KEYS:
     );
 }
 
-fn handle_command(db: &BukuDb, line: &str) -> Result<(), Box<dyn Error>> {
+fn handle_command(db: &BukuDb, line: &str) -> Result<()> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {
         return Ok(());
@@ -67,7 +69,7 @@ fn handle_command(db: &BukuDb, line: &str) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn handle_search(db: &BukuDb, parts: &[&str], any: bool) -> Result<(), Box<dyn Error>> {
+fn handle_search(db: &BukuDb, parts: &[&str], any: bool) -> Result<()> {
     if parts.len() > 1 {
         let keywords: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
         let records = db.search(&keywords, any, false, false)?;
@@ -84,7 +86,7 @@ fn handle_search(db: &BukuDb, parts: &[&str], any: bool) -> Result<(), Box<dyn E
     Ok(())
 }
 
-fn handle_edit(db: &BukuDb, parts: &[&str]) -> Result<(), Box<dyn Error>> {
+fn handle_edit(db: &BukuDb, parts: &[&str]) -> Result<()> {
     if parts.len() < 2 {
         println!("Usage: e <bookmark_id>");
         println!("Example: e 5");
@@ -144,13 +146,13 @@ fn handle_edit(db: &BukuDb, parts: &[&str]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_print(_parts: &[&str]) -> Result<(), Box<dyn Error>> {
+fn handle_print(_parts: &[&str]) -> Result<()> {
     // TODO: Implement range parsing
     println!("Print by index/range not fully implemented yet");
     Ok(())
 }
 
-fn handle_open_by_id(db: &BukuDb, parts: &[&str]) -> Result<(), Box<dyn Error>> {
+fn handle_open_by_id(db: &BukuDb, parts: &[&str]) -> Result<()> {
     // Check if it's an index
     if let Ok(id) = parts[0].parse::<usize>() {
         if let Some(rec) = db.get_rec_by_id(id)? {

@@ -1,13 +1,12 @@
 use crate::db::BukuDb;
 use crate::utils;
-use std::error::Error;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 /// Trait for importing bookmarks from different formats
 pub trait BookmarkImporter {
-    fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>>;
+    fn import(&self, db: &BukuDb, path: &Path) -> crate::error::Result<usize>;
 }
 
 /// Parsed bookmark ready for import
@@ -26,7 +25,7 @@ use std::sync::mpsc::{sync_channel, SyncSender};
 pub fn parse_html_bookmarks_stream(
     path: &Path,
     tx: SyncSender<ParsedBookmark>,
-) -> Result<(), Box<dyn Error>> {
+) -> crate::error::Result<()> {
     let html = std::fs::read_to_string(path)?;
     let dom = tl::parse(&html, tl::ParserOptions::default())?;
     let parser = dom.parser();
@@ -122,7 +121,7 @@ pub fn parse_html_bookmarks_stream(
 }
 
 /// Parse HTML bookmarks without inserting into database (non-streaming version for backward compatibility)
-pub fn parse_html_bookmarks(path: &Path) -> Result<Vec<ParsedBookmark>, Box<dyn Error>> {
+pub fn parse_html_bookmarks(path: &Path) -> Result<Vec<ParsedBookmark>, crate::error::BukursError> {
     let (tx, rx) = sync_channel(1000);
     let path_buf = path.to_path_buf();
 
@@ -143,7 +142,7 @@ pub fn import_bookmarks_parallel(
     db: &BukuDb,
     file_path: &str,
     num_threads: usize,
-) -> Result<usize, Box<dyn Error>> {
+) -> crate::error::Result<usize> {
     let path = Path::new(file_path).to_path_buf();
     // Create a bounded channel for backpressure (buffer size 100)
     let (tx, rx) = sync_channel::<ParsedBookmark>(100);
@@ -219,7 +218,7 @@ pub fn import_bookmarks_parallel(
 pub struct HtmlImporter;
 
 impl BookmarkImporter for HtmlImporter {
-    fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
+    fn import(&self, db: &BukuDb, path: &Path) -> crate::error::Result<usize> {
         // Use the new parsing function
         let bookmarks = parse_html_bookmarks(path)?;
         let mut imported_count = 0;
@@ -248,7 +247,7 @@ impl BookmarkImporter for HtmlImporter {
 }
 
 /// Import bookmarks from browser HTML export file (single-threaded)
-pub fn import_bookmarks(db: &BukuDb, file_path: &str) -> Result<usize, Box<dyn Error>> {
+pub fn import_bookmarks(db: &BukuDb, file_path: &str) -> crate::error::Result<usize> {
     let path = Path::new(file_path);
     let importer = HtmlImporter;
     importer.import(db, path)

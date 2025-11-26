@@ -1,8 +1,8 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::format::OutputFormat;
 use bukurs::operations;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrintCommand {
@@ -13,7 +13,7 @@ pub struct PrintCommand {
 }
 
 impl BukuCommand for PrintCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         // Use the prepare_print operation
         let operation = operations::prepare_print(&self.ids, ctx.db)?;
 

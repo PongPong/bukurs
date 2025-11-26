@@ -1,6 +1,6 @@
 use bukurs::config::Config;
 use bukurs::db::BukuDb;
-use std::error::Error;
+use bukurs::error::Result;
 use std::path::Path;
 
 pub struct AppContext<'a> {
@@ -21,5 +21,5 @@ pub mod tag;
 pub mod update;
 
 pub trait BukuCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>>;
+    fn execute(&self, ctx: &AppContext) -> Result<()>;
 }

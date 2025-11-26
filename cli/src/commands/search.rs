@@ -1,7 +1,7 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::format::OutputFormat;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCommand {
@@ -15,7 +15,7 @@ pub struct SearchCommand {
 }
 
 impl BukuCommand for SearchCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let any = !self.all;
         eprintln!("Searching for: {:?}", self.keywords);
         let mut records = ctx.db.search(&self.keywords, any, self.deep, self.regex)?;

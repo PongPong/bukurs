@@ -1,7 +1,6 @@
 use super::import::BookmarkImporter;
 use crate::db::BukuDb;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -249,7 +248,7 @@ fn detect_all_edge_profiles() -> Vec<BrowserProfile> {
 pub struct ChromeImporter;
 
 impl super::import::BookmarkImporter for ChromeImporter {
-    fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
+    fn import(&self, db: &BukuDb, path: &Path) -> crate::error::Result<usize> {
         import_chrome_with_progress(db, path, |_url| {})
     }
 }
@@ -258,7 +257,7 @@ fn import_chrome_with_progress<F>(
     db: &BukuDb,
     path: &Path,
     mut progress_callback: F,
-) -> Result<usize, Box<dyn Error>>
+) -> crate::error::Result<usize>
 where
     F: FnMut(&str),
 {
@@ -297,7 +296,7 @@ fn import_chrome_folder_with_progress<F>(
     folder: &ChromeBookmark,
     parent_tags: &str,
     progress_callback: &mut F,
-) -> Result<usize, Box<dyn Error>>
+) -> crate::error::Result<usize>
 where
     F: FnMut(&str),
 {
@@ -345,7 +344,7 @@ where
 pub struct FirefoxImporter;
 
 impl super::import::BookmarkImporter for FirefoxImporter {
-    fn import(&self, db: &BukuDb, path: &Path) -> Result<usize, Box<dyn Error>> {
+    fn import(&self, db: &BukuDb, path: &Path) -> crate::error::Result<usize> {
         import_firefox_with_progress(db, path, |_url| {})
     }
 }
@@ -354,7 +353,7 @@ fn import_firefox_with_progress<F>(
     db: &BukuDb,
     path: &Path,
     mut progress_callback: F,
-) -> Result<usize, Box<dyn Error>>
+) -> crate::error::Result<usize>
 where
     F: FnMut(&str),
 {
@@ -394,19 +393,19 @@ where
 }
 
 /// Import bookmarks directly from Chrome JSON file
-pub fn import_from_chrome(db: &BukuDb, bookmarks_path: &Path) -> Result<usize, Box<dyn Error>> {
+pub fn import_from_chrome(db: &BukuDb, bookmarks_path: &Path) -> crate::error::Result<usize> {
     let importer = ChromeImporter;
     importer.import(db, bookmarks_path)
 }
 
 /// Import bookmarks directly from Firefox SQLite database
-pub fn import_from_firefox(db: &BukuDb, places_path: &Path) -> Result<usize, Box<dyn Error>> {
+pub fn import_from_firefox(db: &BukuDb, places_path: &Path) -> crate::error::Result<usize> {
     let importer = FirefoxImporter;
     importer.import(db, places_path)
 }
 
 /// Auto-import from all detected browsers
-pub fn auto_import_all(db: &BukuDb) -> Result<usize, Box<dyn Error>> {
+pub fn auto_import_all(db: &BukuDb) -> crate::error::Result<usize> {
     auto_import_all_with_progress(db, |_profile, _current, _total, _url| {})
 }
 
@@ -415,7 +414,7 @@ pub fn auto_import_all(db: &BukuDb) -> Result<usize, Box<dyn Error>> {
 pub fn auto_import_all_with_progress<F>(
     db: &BukuDb,
     mut progress_callback: F,
-) -> Result<usize, Box<dyn Error>>
+) -> crate::error::Result<usize>
 where
     F: FnMut(&BrowserProfile, usize, usize, Option<&str>),
 {
@@ -461,7 +460,7 @@ pub fn list_detected_browsers() -> Vec<BrowserProfile> {
 pub fn import_from_selected_browsers(
     db: &BukuDb,
     browser_names: &[String],
-) -> Result<usize, Box<dyn Error>> {
+) -> crate::error::Result<usize> {
     import_from_selected_browsers_with_progress(
         db,
         browser_names,
@@ -475,7 +474,7 @@ pub fn import_from_selected_browsers_with_progress<F>(
     db: &BukuDb,
     browser_names: &[String],
     mut progress_callback: F,
-) -> Result<usize, Box<dyn Error>>
+) -> crate::error::Result<usize>
 where
     F: FnMut(&BrowserProfile, usize, usize, Option<&str>),
 {

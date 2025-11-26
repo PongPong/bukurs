@@ -1,10 +1,10 @@
 use super::{AppContext, BukuCommand};
+use bukurs::error::Result;
 use crate::cli::get_exe_name;
 use bukurs::import_export;
 use console::Term;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 /// Truncate URL to fit terminal width, accounting for spinner, counter, and prefix
 fn truncate_url_for_display(url: &str, profile_name: &str) -> String {
@@ -37,7 +37,7 @@ pub struct ImportCommand {
 }
 
 impl BukuCommand for ImportCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         let count = if ctx.config.import_threads > 1 {
             eprintln!("Importing with {} threads...", ctx.config.import_threads);
             import_export::import_bookmarks_parallel(ctx.db, &self.file, ctx.config.import_threads)?
@@ -60,7 +60,7 @@ pub struct ImportBrowsersCommand {
 }
 
 impl BukuCommand for ImportBrowsersCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         if self.list {
             // List detected browsers
             let profiles = import_export::list_detected_browsers();
@@ -184,7 +184,7 @@ pub struct ExportCommand {
 }
 
 impl BukuCommand for ExportCommand {
-    fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    fn execute(&self, ctx: &AppContext) -> Result<()> {
         import_export::export_bookmarks(ctx.db, &self.file)?;
         eprintln!("Exported bookmarks to {}", self.file);
         Ok(())

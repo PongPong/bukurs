@@ -1,4 +1,5 @@
 use bukurs::db::BukuDb;
+use bukurs::error::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -264,7 +265,7 @@ pub fn handle_args(
     db: &BukuDb,
     db_path: &std::path::Path,
     config: &bukurs::config::Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let ctx = AppContext {
         db,
         config,
@@ -382,7 +383,7 @@ mod tests {
     use rstest::rstest;
 
     // Helper to parse CLI arguments from a string
-    fn parse_args(args: &str) -> Result<Cli, clap::Error> {
+    fn parse_args(args: &str) -> std::result::Result<Cli, clap::Error> {
         let args_vec: Vec<&str> = args.split_whitespace().collect();
         Cli::try_parse_from(std::iter::once("buku").chain(args_vec))
     }
