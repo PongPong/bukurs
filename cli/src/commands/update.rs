@@ -85,35 +85,21 @@ impl BukuCommand for UpdateCommand {
                 );
                 pb.set_message("Processing bookmarks");
 
-                // Compute updates for each bookmark in parallel
-                let updated_bookmarks: Vec<_> = if tag_operations.is_some() {
-                    // For tag operations, compute final tags for each bookmark in parallel
-                    bookmarks
+                // Now perform the batch update in a single transaction
+                let result = if let Some(ref ops) = tag_operations {
+                    // Compute updates for each bookmark in parallel
+                    let updated_bookmarks: Vec<_> = bookmarks
                         .par_iter()
                         .map(|bookmark| {
                             let mut updated = bookmark.clone();
-                            if let Some(ref ops) = tag_operations {
-                                updated.tags = apply_tag_operations(&bookmark.tags, ops);
-                            }
+                            updated.tags = apply_tag_operations(&bookmark.tags, ops);
                             pb.inc(1);
                             updated
                         })
-                        .collect()
-                } else {
-                    // No tag operations, just clone in parallel
-                    bookmarks
-                        .par_iter()
-                        .map(|bookmark| {
-                            pb.inc(1);
-                            bookmark.clone()
-                        })
-                        .collect()
-                };
-
-                pb.finish_and_clear();
-
-                // Now perform the batch update in a single transaction
-                let result = if tag_operations.is_some() {
+                        .collect();
+                    
+                    pb.finish_and_clear();
+                    
                     ctx.db.update_rec_batch_with_tags(
                         &updated_bookmarks,
                         url_ref,
@@ -122,6 +108,10 @@ impl BukuCommand for UpdateCommand {
                         self.immutable,
                     )
                 } else {
+                    // No tag operations, just count progress and use original bookmarks
+                    bookmarks.par_iter().for_each(|_| pb.inc(1));
+                    pb.finish_and_clear();
+                    
                     ctx.db.update_rec_batch(
                         &bookmarks,
                         url_ref,

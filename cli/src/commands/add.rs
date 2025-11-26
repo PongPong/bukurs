@@ -83,9 +83,9 @@ impl BukuCommand for AddCommand {
         // Add to database
         let id_result = ctx.db.add_rec(
             &self.url,
-            &self.title.clone().unwrap_or_default(),
+            self.title.as_deref().unwrap_or(""),
             &tags_str,
-            &self.comment.clone().unwrap_or_default(),
+            self.comment.as_deref().unwrap_or(""),
             None, // parent_id
         );
 

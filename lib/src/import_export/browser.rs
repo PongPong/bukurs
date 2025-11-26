@@ -373,11 +373,11 @@ where
     let mut count = 0;
     for bookmark_result in bookmarks {
         let (url, title_opt) = bookmark_result?;
-        let title = title_opt.unwrap_or_else(|| url.clone());
+        let title = title_opt.as_deref().unwrap_or(&url);
 
         progress_callback(&url);
 
-        match db.add_rec(&url, &title, ",firefox,", "", None) {
+        match db.add_rec(&url, title, ",firefox,", "", None) {
             Ok(_) => count += 1,
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
