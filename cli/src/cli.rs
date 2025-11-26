@@ -257,7 +257,7 @@ use crate::commands::{
     search::SearchCommand,
     tag::TagCommand,
     update::UpdateCommand,
-    AppContext, BukuCommand,
+    AppContext, CommandEnum,
 };
 
 pub fn handle_args(
@@ -272,14 +272,14 @@ pub fn handle_args(
         db_path,
     };
 
-    let command: Box<dyn BukuCommand> = match cli.command {
+    let command = match cli.command {
         Some(Commands::Add {
             url,
             tag,
             title,
             comment,
             offline,
-        }) => Box::new(AddCommand {
+        }) => CommandEnum::Add(AddCommand {
             url,
             tag,
             title,
@@ -294,7 +294,7 @@ pub fn handle_args(
             title,
             comment,
             immutable,
-        }) => Box::new(UpdateCommand {
+        }) => CommandEnum::Update(UpdateCommand {
             ids,
             url,
             tag,
@@ -307,9 +307,9 @@ pub fn handle_args(
             ids,
             force,
             retain_order: _,
-        }) => Box::new(DeleteCommand { ids, force }),
+        }) => CommandEnum::Delete(DeleteCommand { ids, force }),
 
-        Some(Commands::Print { ids, columns: _ }) => Box::new(PrintCommand {
+        Some(Commands::Print { ids, columns: _ }) => CommandEnum::Print(PrintCommand {
             ids,
             limit: cli.limit,
             format: cli.format,
@@ -322,7 +322,7 @@ pub fn handle_args(
             deep,
             regex,
             markers: _,
-        }) => Box::new(SearchCommand {
+        }) => CommandEnum::Search(SearchCommand {
             keywords,
             all,
             deep,
@@ -332,40 +332,40 @@ pub fn handle_args(
             nc: cli.nc,
         }),
 
-        Some(Commands::Tag { tags }) => Box::new(TagCommand {
+        Some(Commands::Tag { tags }) => CommandEnum::Tag(TagCommand {
             tags,
             limit: cli.limit,
             format: cli.format,
             nc: cli.nc,
         }),
 
-        Some(Commands::Lock { iterations }) => Box::new(LockCommand { iterations }),
+        Some(Commands::Lock { iterations }) => CommandEnum::Lock(LockCommand { iterations }),
 
-        Some(Commands::Unlock { iterations }) => Box::new(UnlockCommand { iterations }),
+        Some(Commands::Unlock { iterations }) => CommandEnum::Unlock(UnlockCommand { iterations }),
 
-        Some(Commands::Import { file }) => Box::new(ImportCommand { file }),
+        Some(Commands::Import { file }) => CommandEnum::Import(ImportCommand { file }),
 
         Some(Commands::ImportBrowsers {
             list,
             all,
             browsers,
-        }) => Box::new(ImportBrowsersCommand {
+        }) => CommandEnum::ImportBrowsers(ImportBrowsersCommand {
             list,
             all,
             browsers,
         }),
 
-        Some(Commands::Export { file }) => Box::new(ExportCommand { file }),
+        Some(Commands::Export { file }) => CommandEnum::Export(ExportCommand { file }),
 
-        Some(Commands::Open { ids }) => Box::new(OpenCommand { ids }),
+        Some(Commands::Open { ids }) => CommandEnum::Open(OpenCommand { ids }),
 
-        Some(Commands::Shell) => Box::new(ShellCommand),
+        Some(Commands::Shell) => CommandEnum::Shell(ShellCommand),
 
-        Some(Commands::Edit { id }) => Box::new(EditCommand { id }),
+        Some(Commands::Edit { id }) => CommandEnum::Edit(EditCommand { id }),
 
-        Some(Commands::Undo { count }) => Box::new(UndoCommand { count }),
+        Some(Commands::Undo { count }) => CommandEnum::Undo(UndoCommand { count }),
 
-        None => Box::new(NoCommand {
+        None => CommandEnum::No(NoCommand {
             keywords: cli.keywords,
             open: cli.open,
             format: cli.format,
