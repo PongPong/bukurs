@@ -72,6 +72,38 @@ fn bench_db_ops(c: &mut Criterion) {
         );
     });
 
+    group.bench_function("add_rec_file_default", |b| {
+        b.iter_with_setup(
+            || {
+                let tmp_dir = tempfile::tempdir().unwrap();
+                let db_path = tmp_dir.path().join("test.db");
+                (tmp_dir, BukuDb::init(&db_path).unwrap())
+            },
+            |(_tmp_dir, db)| {
+                db.add_rec("https://example.com", "Title", ",tags,", "Desc", None)
+                    .unwrap();
+            },
+        );
+    });
+
+    group.bench_function("add_rec_file_optimized", |b| {
+        b.iter_with_setup(
+            || {
+                let tmp_dir = tempfile::tempdir().unwrap();
+                let db_path = tmp_dir.path().join("test.db");
+                let db = BukuDb::init(&db_path).unwrap();
+                // Apply optimizations manually for benchmark
+                db.execute("PRAGMA synchronous = NORMAL", []).unwrap();
+                db.set_journal_mode("WAL").unwrap();
+                (tmp_dir, db)
+            },
+            |(_tmp_dir, db)| {
+                db.add_rec("https://example.com", "Title", ",tags,", "Desc", None)
+                    .unwrap();
+            },
+        );
+    });
+
     group.finish();
 }
 

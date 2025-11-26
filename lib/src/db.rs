@@ -18,6 +18,15 @@ impl BukuDb {
     {
         self.conn.execute(sql, params)
     }
+
+    pub fn set_journal_mode(&self, mode: &str) -> Result<String> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA journal_mode = {}", mode))?;
+        let result: String = stmt.query_row([], |row| row.get(0))?;
+        Ok(result)
+    }
+
     pub fn init_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let db = Self {
@@ -53,6 +62,16 @@ impl BukuDb {
     }
 
     fn setup_tables(&self) -> Result<()> {
+        // Apply performance optimizations
+        // Use WAL mode for better concurrency and write performance
+        let _ = self.set_journal_mode("WAL");
+        // Use NORMAL synchronous mode for better write performance while remaining safe in WAL mode
+        self.conn.execute("PRAGMA synchronous = NORMAL", [])?;
+        // Store temp tables in memory
+        self.conn.execute("PRAGMA temp_store = MEMORY", [])?;
+        // Increase cache size to ~64MB
+        self.conn.execute("PRAGMA cache_size = -64000", [])?;
+
         self.conn.execute(
             "CREATE TABLE if not exists bookmarks (
                 id integer PRIMARY KEY,
@@ -156,12 +175,6 @@ impl BukuDb {
                 [],
             )?;
         }
-
-        // Create unique index on URL
-        self.conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_url ON bookmarks(URL)",
-            [],
-        )?;
 
         if cfg!(debug_assertions) {
             self.conn
@@ -284,7 +297,7 @@ impl BukuDb {
 
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags) 
+                "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             stmt.execute((
@@ -425,7 +438,9 @@ impl BukuDb {
             return Ok(());
         }
 
-        let mut query = "UPDATE bookmarks SET ".to_string();
+        // Pre-allocate capacity for query string to avoid reallocations
+        let mut query = String::with_capacity(64 + updates.len() * 20);
+        query.push_str("UPDATE bookmarks SET ");
         query.push_str(&updates.join(", "));
         query.push_str(" WHERE id = :id");
 
@@ -941,8 +956,8 @@ impl BukuDb {
 
             if let Some(batch_id_val) = batch_id {
                 // This is a batch operation - undo all entries with the same batch_id
-                let mut stmt = tx.prepare(
-                    "SELECT id, operation, bookmark_id, url, title, tags, desc, parent_id, flags 
+                let mut stmt = tx.prepare_cached(
+                    "SELECT id, operation, bookmark_id, url, title, tags, desc, parent_id, flags
                      FROM undo_log WHERE batch_id = ?1 ORDER BY id ASC",
                 )?;
                 let batch_ops: Vec<(usize, UndoLogData)> = stmt
@@ -977,8 +992,8 @@ impl BukuDb {
             } else {
                 // Single operation (no batch_id)
                 // Fetch the complete undo log data
-                let mut stmt = tx.prepare(
-                    "SELECT operation, bookmark_id, url, title, tags, desc, parent_id, flags 
+                let mut stmt = tx.prepare_cached(
+                    "SELECT operation, bookmark_id, url, title, tags, desc, parent_id, flags
                      FROM undo_log ORDER BY id DESC LIMIT 1",
                 )?;
 

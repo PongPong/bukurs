@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 bukurs = { path = "../lib" }
 criterion = "0.5"
+tempfile = "3.10"
 
 [[bench]]
 name = "benchmark"
