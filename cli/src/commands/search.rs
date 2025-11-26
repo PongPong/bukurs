@@ -63,7 +63,7 @@ mod tests {
             }
         }
 
-        fn ctx(&self) -> AppContext {
+        fn ctx(&self) -> AppContext<'_> {
             AppContext {
                 db: &self.db,
                 config: &self.config,
@@ -76,7 +76,7 @@ mod tests {
     #[case(vec!["rust".to_string()], true)]
     #[case(vec!["example".to_string()], true)]
     #[case(vec!["nonexistent".to_string()], false)]
-    fn test_search_command(#[case] keywords: Vec<String>, #[case] should_find: bool) {
+    fn test_search_command(#[case] keywords: Vec<String>, #[case] _should_find: bool) {
         let env = TestEnv::new();
         env.db
             .add_rec(

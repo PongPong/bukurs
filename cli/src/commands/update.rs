@@ -97,9 +97,9 @@ impl BukuCommand for UpdateCommand {
                             updated
                         })
                         .collect();
-                    
+
                     pb.finish_and_clear();
-                    
+
                     ctx.db.update_rec_batch_with_tags(
                         &updated_bookmarks,
                         url_ref,
@@ -111,7 +111,7 @@ impl BukuCommand for UpdateCommand {
                     // No tag operations, just count progress and use original bookmarks
                     bookmarks.par_iter().for_each(|_| pb.inc(1));
                     pb.finish_and_clear();
-                    
+
                     ctx.db.update_rec_batch(
                         &bookmarks,
                         url_ref,
@@ -296,7 +296,7 @@ mod tests {
             }
         }
 
-        fn ctx(&self) -> AppContext {
+        fn ctx(&self) -> AppContext<'_> {
             AppContext {
                 db: &self.db,
                 config: &self.config,

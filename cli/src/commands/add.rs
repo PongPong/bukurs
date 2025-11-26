@@ -118,15 +118,6 @@ mod tests {
     use rstest::rstest;
     use std::path::PathBuf;
 
-    fn setup_ctx(db: &BukuDb) -> AppContext {
-        // We need a config and path, but for unit tests of commands that just call handlers,
-        // we might need to mock or provide dummy values.
-        // Since AppContext holds references, we need the owners to live long enough.
-        // This is tricky in a helper function returning AppContext with references to local vars.
-        // So we'll do setup in the test or use a fixture that returns the owners.
-        panic!("Use setup_test_env instead");
-    }
-
     struct TestEnv {
         db: BukuDb,
         config: Config,
@@ -145,7 +136,7 @@ mod tests {
             }
         }
 
-        fn ctx(&self) -> AppContext {
+        fn ctx(&self) -> AppContext<'_> {
             AppContext {
                 db: &self.db,
                 config: &self.config,

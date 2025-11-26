@@ -130,7 +130,7 @@ mod tests {
             }
         }
 
-        fn ctx(&self) -> AppContext {
+        fn ctx(&self) -> AppContext<'_> {
             AppContext {
                 db: &self.db,
                 config: &self.config,
