@@ -22,7 +22,7 @@ impl BukuDb {
     pub fn set_journal_mode(&self, mode: &str) -> Result<String> {
         let mut stmt = self
             .conn
-            .prepare(&format!("PRAGMA journal_mode = {}", mode))?;
+            .prepare_cached(&format!("PRAGMA journal_mode = {}", mode))?;
         let result: String = stmt.query_row([], |row| row.get(0))?;
         Ok(result)
     }
@@ -105,7 +105,7 @@ impl BukuDb {
 
         // Migration: Add batch_id column if it doesn't exist (for existing databases)
         let has_batch_id: bool = {
-            let mut stmt = self.conn.prepare("PRAGMA table_info(undo_log)")?;
+            let mut stmt = self.conn.prepare_cached("PRAGMA table_info(undo_log)")?;
             let rows = stmt.query_map([], |row| {
                 let name: String = row.get(1)?;
                 Ok(name)
@@ -128,7 +128,7 @@ impl BukuDb {
 
         // Migration: Add parent_id column if it doesn't exist
         let has_parent_id: bool = {
-            let mut stmt = self.conn.prepare("PRAGMA table_info(bookmarks)")?;
+            let mut stmt = self.conn.prepare_cached("PRAGMA table_info(bookmarks)")?;
             let rows = stmt.query_map([], |row| {
                 let name: String = row.get(1)?;
                 Ok(name)
@@ -153,7 +153,7 @@ impl BukuDb {
 
         // Migration: Add flags column if it doesn't exist
         let has_flags: bool = {
-            let mut stmt = self.conn.prepare("PRAGMA table_info(bookmarks)")?;
+            let mut stmt = self.conn.prepare_cached("PRAGMA table_info(bookmarks)")?;
             let rows = stmt.query_map([], |row| {
                 let name: String = row.get(1)?;
                 Ok(name)
