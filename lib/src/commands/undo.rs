@@ -85,26 +85,26 @@ impl UndoCommand {
     }
 
     /// Create command from undo_log data
-    pub fn from_undo_log(data: &UndoLogData) -> Option<Self> {
+    pub fn from_undo_log(data: UndoLogData) -> Option<Self> {
         match data.operation.as_str() {
             "ADD" => Some(UndoCommand::Add {
                 bookmark_id: data.bookmark_id,
             }),
             "UPDATE" => Some(UndoCommand::Update {
                 bookmark_id: data.bookmark_id,
-                url: data.url.clone()?,
-                title: data.title.clone()?,
-                tags: data.tags.clone()?,
-                desc: data.desc.clone()?,
+                url: data.url?,
+                title: data.title?,
+                tags: data.tags?,
+                desc: data.desc?,
                 parent_id: data.parent_id,
                 flags: data.flags?,
             }),
             "DELETE" => Some(UndoCommand::Delete {
                 bookmark_id: data.bookmark_id,
-                url: data.url.clone()?,
-                title: data.title.clone()?,
-                tags: data.tags.clone()?,
-                desc: data.desc.clone()?,
+                url: data.url?,
+                title: data.title?,
+                tags: data.tags?,
+                desc: data.desc?,
                 parent_id: data.parent_id,
                 flags: data.flags?,
             }),

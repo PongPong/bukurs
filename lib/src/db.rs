@@ -801,18 +801,18 @@ impl BukuDb {
         }
 
         // Build FTS5 query
-        let query = if keywords.len() == 1
+        let query: std::borrow::Cow<str> = if keywords.len() == 1
             && (utils::has_char(b'"', keywords[0].as_str())
                 || keywords[0].contains(" OR ")
                 || keywords[0].contains(" AND "))
         {
             // User provided FTS5 query syntax - use as is
-            keywords[0].clone()
+            std::borrow::Cow::Borrowed(&keywords[0])
         } else {
             // Simple keywords - quote each to treat as literal phrase and avoid FTS5 syntax errors
             let quoted_keywords = Self::quote_fts5_keywords(keywords, None);
             let join_op = if any { " OR " } else { " AND " };
-            quoted_keywords.join(join_op)
+            std::borrow::Cow::Owned(quoted_keywords.join(join_op))
         };
 
         // Query FTS5 table to get matching bookmark IDs (ranked by relevance)
@@ -951,7 +951,7 @@ impl BukuDb {
 
                 // Create command objects and execute undo for each operation
                 for (log_entry_id, data) in batch_ops {
-                    if let Some(command) = UndoCommand::from_undo_log(&data) {
+                    if let Some(command) = UndoCommand::from_undo_log(data) {
                         command.undo(self)?;
                     }
 
@@ -980,7 +980,7 @@ impl BukuDb {
                     })
                 }) {
                     // Create command object and execute undo
-                    if let Some(command) = UndoCommand::from_undo_log(&data) {
+                    if let Some(command) = UndoCommand::from_undo_log(data) {
                         command.undo(self)?;
                     }
                 }
