@@ -6,21 +6,21 @@ fn bench_db_ops(c: &mut Criterion) {
 
     group.bench_function("add_rec", |b| {
         b.iter_with_setup(
-            || {
-                // Setup: Create a fresh in-memory DB for each iteration to avoid unique constraint violations
-                // or growing DB size affecting performance.
-                BukuDb::init_in_memory().unwrap()
-            },
+            || BukuDb::init_in_memory().unwrap(),
             |db| {
-                // Benchmark: Add a single record
-                db.add_rec(
-                    "https://example.com",
-                    "Example Title",
-                    ",tag1,tag2,",
-                    "Description",
-                    None,
-                )
-                .unwrap();
+                // We can't easily reuse DB across iterations in criterion's iter_with_setup
+                // without changing how we measure.
+                // Instead, let's measure adding MANY records in one go, which will benefit from caching.
+                for i in 0..100 {
+                    db.add_rec(
+                        &format!("https://example.com/{}", i),
+                        &format!("Example Title {}", i),
+                        ",tag1,tag2,",
+                        "Description",
+                        None,
+                    )
+                    .unwrap();
+                }
             },
         );
     });

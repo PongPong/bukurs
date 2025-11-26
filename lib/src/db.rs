@@ -268,10 +268,12 @@ impl BukuDb {
         let flags = 0;
 
         // Insert bookmark
-        tx.execute(
-            "INSERT INTO bookmarks (URL, metadata, tags, desc, parent_id, flags) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (url, title, tags, desc, parent_id, flags),
-        )?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO bookmarks (URL, metadata, tags, desc, parent_id, flags) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            stmt.execute((url, title, tags, desc, parent_id, flags))?;
+        }
         let id = tx.last_insert_rowid() as usize;
 
         // Log undo information with individual columns
@@ -280,11 +282,15 @@ impl BukuDb {
             .expect("Time went backwards")
             .as_secs() as i64;
 
-        tx.execute(
-            "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            (timestamp, "ADD", id, url, title, tags, desc, parent_id, flags),
-        )?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            stmt.execute((
+                timestamp, "ADD", id, url, title, tags, desc, parent_id, flags,
+            ))?;
+        }
 
         tx.commit()?;
         Ok(id)
@@ -350,7 +356,7 @@ impl BukuDb {
             Option<usize>,
             i32,
         ) = {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1",
             )?;
             match stmt.query_row([id], |row| {
@@ -374,10 +380,12 @@ impl BukuDb {
             .expect("Time went backwards")
             .as_secs() as i64;
 
-        tx.execute(
+        {
+            let mut stmt = tx.prepare_cached(
             "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            (
+        )?;
+            stmt.execute((
                 timestamp,
                 "UPDATE",
                 id,
@@ -387,8 +395,8 @@ impl BukuDb {
                 old_desc,
                 old_parent_id,
                 old_flags,
-            ),
-        )?;
+            ))?;
+        }
 
         // Build and execute update query
         let mut updates = Vec::new();
@@ -680,7 +688,7 @@ impl BukuDb {
             Option<usize>,
             i32,
         ) = {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 "SELECT URL, metadata, tags, desc, parent_id, flags FROM bookmarks WHERE id = ?1",
             )?;
             match stmt.query_row([id], |row| {
@@ -704,13 +712,20 @@ impl BukuDb {
             .expect("Time went backwards")
             .as_secs() as i64;
 
-        tx.execute(
+        {
+            let mut stmt = tx.prepare_cached(
             "INSERT INTO undo_log (timestamp, operation, bookmark_id, url, title, tags, desc, parent_id, flags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            (timestamp, "DELETE", id, url, title, tags, desc, parent_id, flags),
         )?;
+            stmt.execute((
+                timestamp, "DELETE", id, url, title, tags, desc, parent_id, flags,
+            ))?;
+        }
 
-        tx.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM bookmarks WHERE id = ?1")?;
+            stmt.execute([id])?;
+        }
         tx.commit()?;
         Ok(())
     }
