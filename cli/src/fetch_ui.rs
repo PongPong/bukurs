@@ -6,10 +6,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 ///
 /// Shows an animated spinner while fetching, then displays success/failure status
 /// with categorized error messages.
-pub fn fetch_with_spinner(
-    url: &str,
-    user_agent: &str,
-) -> Result<fetch::FetchResult> {
+pub fn fetch_with_spinner(url: &str, user_agent: &str) -> Result<fetch::FetchResult> {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()

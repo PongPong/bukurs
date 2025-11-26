@@ -4,8 +4,8 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
 pub fn run(db: &BukuDb) -> Result<()> {
-    let mut rl = DefaultEditor::new()
-        .map_err(|e| bukurs::error::BukursError::Other(e.to_string()))?;
+    let mut rl =
+        DefaultEditor::new().map_err(|e| bukurs::error::BukursError::Other(e.to_string()))?;
 
     loop {
         let readline = rl.readline("buku (? for help) ");

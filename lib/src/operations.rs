@@ -158,27 +158,18 @@ pub fn resolve_bookmarks(
 }
 
 /// Prepare a delete operation (wrapper around resolve_bookmarks for backward compatibility)
-pub fn prepare_delete(
-    ids: &[String],
-    db: &BukuDb,
-) -> crate::error::Result<BookmarkSelection> {
+pub fn prepare_delete(ids: &[String], db: &BukuDb) -> crate::error::Result<BookmarkSelection> {
     resolve_bookmarks(ids, db)
 }
 
 /// Prepare a print operation (wrapper around resolve_bookmarks)
-pub fn prepare_print(
-    ids: &[String],
-    db: &BukuDb,
-) -> crate::error::Result<BookmarkSelection> {
+pub fn prepare_print(ids: &[String], db: &BukuDb) -> crate::error::Result<BookmarkSelection> {
     resolve_bookmarks(ids, db)
 }
 
 /// Execute a delete operation
 /// Returns the number of bookmarks deleted
-pub fn execute_delete(
-    operation: &BookmarkSelection,
-    db: &BukuDb,
-) -> crate::error::Result<usize> {
+pub fn execute_delete(operation: &BookmarkSelection, db: &BukuDb) -> crate::error::Result<usize> {
     // For multiple bookmarks, use batch delete to enable batch undo
     if operation.selected_ids.len() > 1 {
         let count = db.delete_rec_batch(&operation.selected_ids)?;

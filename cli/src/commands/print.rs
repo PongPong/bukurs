@@ -1,6 +1,6 @@
 use super::{AppContext, BukuCommand};
-use bukurs::error::Result;
 use crate::format::OutputFormat;
+use bukurs::error::Result;
 use bukurs::operations;
 use serde::{Deserialize, Serialize};
 

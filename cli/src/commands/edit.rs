@@ -39,7 +39,7 @@ impl BukuCommand for EditCommand {
                                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
                                     {
                                         return Err(bukurs::error::BukursError::InvalidInput(
-                                            format!("Duplicate URL: {}", edited.url)
+                                            format!("Duplicate URL: {}", edited.url),
                                         ));
                                     }
                                 }
@@ -76,7 +76,7 @@ impl BukuCommand for EditCommand {
                                     if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
                                     {
                                         return Err(bukurs::error::BukursError::InvalidInput(
-                                            format!("Duplicate URL: {}", new_bookmark.url)
+                                            format!("Duplicate URL: {}", new_bookmark.url),
                                         ));
                                     }
                                 }

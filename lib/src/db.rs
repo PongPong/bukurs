@@ -1056,7 +1056,8 @@ impl BukuDb {
                 }
 
                 // Remove single log entry - get the ID from the original query
-                let mut stmt = tx.prepare_cached("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
+                let mut stmt =
+                    tx.prepare_cached("SELECT id FROM undo_log ORDER BY id DESC LIMIT 1")?;
                 if let Ok(log_id) = stmt.query_row([], |row| row.get::<_, usize>(0)) {
                     tx.execute("DELETE FROM undo_log WHERE id = ?1", [log_id])?;
                 }
@@ -1825,7 +1826,9 @@ mod tests {
         // Verify that the index on tags column was created
         let mut stmt = db
             .conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bookmarks_tags'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bookmarks_tags'",
+            )
             .unwrap();
         let index_exists: bool = stmt.exists([]).unwrap();
         assert!(index_exists, "Index idx_bookmarks_tags should exist");

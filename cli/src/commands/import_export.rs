@@ -1,6 +1,6 @@
 use super::{AppContext, BukuCommand};
-use bukurs::error::Result;
 use crate::cli::get_exe_name;
+use bukurs::error::Result;
 use bukurs::import_export;
 use console::Term;
 use indicatif::{ProgressBar, ProgressStyle};

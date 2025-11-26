@@ -1,8 +1,8 @@
 use super::{AppContext, BukuCommand};
-use bukurs::error::Result;
 use crate::format::OutputFormat;
 use crate::interactive;
 use bukurs::browser;
+use bukurs::error::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

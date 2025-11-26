@@ -1,6 +1,6 @@
 use super::{AppContext, BukuCommand};
-use bukurs::error::Result;
 use bukurs::crypto;
+use bukurs::error::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

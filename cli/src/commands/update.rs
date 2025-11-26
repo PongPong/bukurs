@@ -1,8 +1,8 @@
 use super::{AppContext, BukuCommand};
-use bukurs::error::Result;
 use crate::cli::get_exe_name;
 use crate::fetch_ui::fetch_with_spinner;
 use crate::tag_ops::{apply_tag_operations, parse_tag_operations};
+use bukurs::error::Result;
 use bukurs::operations;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::prelude::*;

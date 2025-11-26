@@ -1,6 +1,5 @@
-
 /// Custom error type for bukurs library
-/// 
+///
 /// This enum provides better type safety and error handling compared to `crate::error::BukursError`.
 /// Using `thiserror` crate for automatic `Error` trait implementation and `From` conversions.
 #[derive(Debug, thiserror::Error)]
