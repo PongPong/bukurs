@@ -32,34 +32,34 @@ The binary will be in `target/release/bukurs`.
 
 ```bash
 # Start interactive mode (no arguments)
-buku
+bukurs
 
 # Add a bookmark
-buku add https://example.com --tag rust,cli
+bukurs add https://example.com --tag rust,cli
 
 # Search for bookmarks (positional keywords)
-buku rust programming
+bukurs rust programming
 
 # List all bookmarks
-buku print
+bukurs print
 ```
 
 ### Subcommands
 
 ```bash
-buku add <URL>           # Add a new bookmark
-buku update <ID>         # Update an existing bookmark
-buku delete <ID>         # Delete a bookmark
-buku print               # List all bookmarks
-buku search <KEYWORDS>   # Search bookmarks
-buku tag <TAGS>          # Search by tags
-buku undo [COUNT]        # Undo last operation(s)
-buku lock [ITERATIONS]   # Encrypt database
-buku unlock [ITERATIONS] # Decrypt database
-buku import <FILE>       # Import bookmarks
-buku export <FILE>       # Export bookmarks
-buku open <ID>           # Open bookmark in browser
-buku interactive         # Start interactive mode
+bukurs add <URL>           # Add a new bookmark
+bukurs update <ID>         # Update an existing bookmark
+bukurs delete <ID>         # Delete a bookmark
+bukurs print               # List all bookmarks
+bukurs search <KEYWORDS>   # Search bookmarks
+bukurs tag <TAGS>          # Search by tags
+bukurs undo [COUNT]        # Undo last operation(s)
+bukurs lock [ITERATIONS]   # Encrypt database
+bukurs unlock [ITERATIONS] # Decrypt database
+bukurs import <FILE>       # Import bookmarks
+bukurs export <FILE>       # Export bookmarks
+bukurs open <ID>           # Open bookmark in browser
+bukurs interactive         # Start interactive mode
 ```
 
 ### Search Examples
@@ -70,19 +70,19 @@ Search using positional keywords (any match by default):
 
 ```bash
 # Search for bookmarks containing "rust" OR "programming"
-buku rust programming
+bukurs rust programming
 
 # Same as above using explicit search subcommand
-buku search rust programming
+bukurs search rust programming
 
 # Search for bookmarks containing ALL keywords
-buku search rust programming --all
+bukurs search rust programming --all
 
 # Deep search (match substrings)
-buku search rust --deep
+bukurs search rust --deep
 
 # Regex search
-buku search "rust|python" --regex
+bukurs search "rust|python" --regex
 ```
 
 #### Searching for Subcommand Names
@@ -92,19 +92,19 @@ If you want to search for keywords that match subcommand names (like "add", "upd
 **Option 1: Use the explicit `search` subcommand** (Recommended)
 ```bash
 # Search for bookmarks containing "add"
-buku search add
+bukurs search add
 
 # Search for "update" and "delete"
-buku search update delete
+bukurs search update delete
 ```
 
 **Option 2: Use the `--` delimiter** (Unix convention)
 ```bash
 # Search for "add" using -- delimiter
-buku -- add
+bukurs -- add
 
 # Search for multiple keywords including subcommand names
-buku -- add update delete
+bukurs -- add update delete
 ```
 
 The `--` tells the parser that everything after it should be treated as arguments, not subcommands.
@@ -113,36 +113,36 @@ The `--` tells the parser that everything after it should be treated as argument
 
 ```bash
 # Add with automatic metadata fetching
-buku add https://example.com
+bukurs add https://example.com
 
 # Add with custom title and tags
-buku add https://example.com --title "Example Site" --tag rust,web
+bukurs add https://example.com --title "Example Site" --tag rust,web
 
 # Add with description
-buku add https://example.com --comment "A great example site"
+bukurs add https://example.com --comment "A great example site"
 
 # Add without fetching metadata (offline)
-buku add https://example.com --offline
+bukurs add https://example.com --offline
 ```
 
 ### Update Bookmarks
 
 ```bash
 # Update title
-buku update 1 --title "New Title"
+bukurs update 1 --title "New Title"
 
 # Update URL and tags
-buku update 1 --url https://newurl.com --tag rust,updated
+bukurs update 1 --url https://newurl.com --tag rust,updated
 
 # Update description
-buku update 1 --comment "Updated description"
+bukurs update 1 --comment "Updated description"
 
 # Refresh metadata from web (no options = refresh)
-buku update 1
+bukurs update 1
 
 # Refresh multiple bookmarks
-buku update 1-10
-buku update "*"  # Refresh all bookmarks
+bukurs update 1-10
+bukurs update "*"  # Refresh all bookmarks
 ```
 
 ### Tag Operations
@@ -154,13 +154,13 @@ Add tags without removing existing ones:
 
 ```bash
 # Add a single tag
-buku update 1 --tag=+urgent
+bukurs update 1 --tag=+urgent
 
 # Add multiple tags
-buku update 1 --tag=+urgent,+todo
+bukurs update 1 --tag=+urgent,+todo
 
 # Add tags to multiple bookmarks
-buku update 1-5 --tag=+reviewed
+bukurs update 1-5 --tag=+reviewed
 ```
 
 #### Remove Tags (`-` prefix)
@@ -168,13 +168,13 @@ Remove specific tags:
 
 ```bash
 # Remove a single tag
-buku update 1 --tag=-archived
+bukurs update 1 --tag=-archived
 
 # Remove multiple tags
-buku update 1 --tag=-old,-deprecated
+bukurs update 1 --tag=-old,-deprecated
 
 # Remove tags from multiple bookmarks
-buku update 1-10 --tag=-draft
+bukurs update 1-10 --tag=-draft
 ```
 
 #### Replace Tags (`~` prefix)
@@ -182,10 +182,10 @@ Replace one tag with another:
 
 ```bash
 # Replace 'todo' with 'done'
-buku update 1 --tag=~todo:done
+bukurs update 1 --tag=~todo:done
 
 # Replace 'draft' with 'published'
-buku update 1 --tag=~draft:published
+bukurs update 1 --tag=~draft:published
 ```
 
 #### Combine Operations
@@ -193,10 +193,10 @@ You can combine different tag operations in a single command:
 
 ```bash
 # Add 'urgent', remove 'archived', and replace 'todo' with 'done'
-buku update 1 --tag=+urgent,-archived,~todo:done
+bukurs update 1 --tag=+urgent,-archived,~todo:done
 
 # Works with multiple bookmarks too
-buku update 1-100 --tag=+reviewed,-draft
+bukurs update 1-100 --tag=+reviewed,-draft
 ```
 
 #### Plain Tags (No Prefix)
@@ -204,8 +204,8 @@ Tags without a prefix are added by default:
 
 ```bash
 # These are equivalent
-buku update 1 --tag=newtag
-buku update 1 --tag=+newtag
+bukurs update 1 --tag=newtag
+bukurs update 1 --tag=+newtag
 ```
 
 #### Batch Updates with Single Undo
@@ -213,20 +213,20 @@ When updating multiple bookmarks without tag operations, changes are batched for
 
 ```bash
 # Update 100 bookmarks - single undo reverts all
-buku update 1-100 --title "Reviewed"
+bukurs update 1-100 --title "Reviewed"
 
 # Undo once to revert all 100 changes
-buku undo
+bukurs undo
 ```
 
 ### Delete Bookmarks
 
 ```bash
 # Delete bookmark by ID
-buku delete 5
+bukurs delete 5
 
 # Delete with preserved order
-buku delete 5 --retain-order
+bukurs delete 5 --retain-order
 ```
 
 ### Undo Operations
@@ -235,20 +235,20 @@ Undo recent changes to your bookmarks:
 
 ```bash
 # Undo the last operation
-buku undo
+bukurs undo
 
 # Undo the last 5 operations
-buku undo 5
+bukurs undo 5
 ```
 
 **Batch Undo Support**: When you update multiple bookmarks in a single command (without tag operations), all changes are grouped together. A single `undo` command will revert all of them:
 
 ```bash
 # Update 100 bookmarks
-buku update 1-100 --title "Reviewed"
+bukurs update 1-100 --title "Reviewed"
 
 # One undo reverts all 100 changes
-buku undo
+bukurs undo
 # Output: ✓ Undid batch UPDATE: 100 bookmark(s) reverted
 ```
 
@@ -261,26 +261,26 @@ Supported operations:
 
 ```bash
 # Encrypt database with 8 iterations (default)
-buku lock
+bukurs lock
 
 # Encrypt with custom iterations
-buku lock 16
+bukurs lock 16
 
 # Decrypt database
-buku unlock
+bukurs unlock
 
 # Decrypt with custom iterations
-buku unlock 16
+bukurs unlock 16
 ```
 
 ### Import/Export
 
 ```bash
 # Export to HTML
-buku export bookmarks.html
+bukurs export bookmarks.html
 
 # Import from HTML
-buku import bookmarks.html
+bukurs import bookmarks.html
 ```
 
 ### Interactive Mode
@@ -288,9 +288,9 @@ buku import bookmarks.html
 Launch interactive mode to browse and search bookmarks:
 
 ```bash
-buku
+bukurs
 # or explicitly
-buku interactive
+bukurs interactive
 ```
 
 Interactive commands:
@@ -318,7 +318,7 @@ By default, bookmarks are stored in:
 You can specify a custom location with `--db`:
 
 ```bash
-buku --db /path/to/custom.db print
+bukurs --db /path/to/custom.db print
 ```
 
 ## License
