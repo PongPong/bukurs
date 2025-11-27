@@ -119,7 +119,7 @@ fn detect_all_chrome_profiles() -> Vec<BrowserProfile> {
         "Profile 4",
     ];
 
-    for profile_name in profile_names {
+    for profile_name in &profile_names {
         let bookmarks_path = base_path.join(profile_name).join("Bookmarks");
         if bookmarks_path.exists() {
             profiles.push(BrowserProfile {
