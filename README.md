@@ -15,7 +15,7 @@ A Rust port of [buku](https://github.com/jarun/buku), the powerful command-line 
 ## Installation
 
 ```bash
-cargo install --path .
+cargo install --path ./cli
 ```
 
 Or build from source:
@@ -24,7 +24,7 @@ Or build from source:
 cargo build --release
 ```
 
-The binary will be in `target/release/buku`.
+The binary will be in `target/release/bukurs`.
 
 ## Usage
 
