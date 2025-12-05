@@ -1,6 +1,8 @@
 use super::{AppContext, BukuCommand};
 use crate::fetch_ui::fetch_with_spinner;
 use bukurs::error::Result;
+use bukurs::models::bookmark::Bookmark;
+use bukurs::plugin::HookResult;
 use bukurs::{fetch, utils};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
@@ -80,17 +82,53 @@ impl BukuCommand for AddCommand {
             format!(",{},", tags.join(","))
         };
 
-        // Add to database
+        // Determine final title for bookmark
+        let final_title = if let Some(t) = self.title.as_ref() {
+            t.clone()
+        } else if !fetch_result.title.is_empty() {
+            fetch_result.title.to_string()
+        } else {
+            self.url.clone()
+        };
+
+        // Create bookmark object for plugin hooks
+        let mut bookmark = Bookmark::new(
+            0, // ID will be assigned by database
+            self.url.clone(),
+            final_title,
+            tags_str,
+            self.comment.clone().unwrap_or_default(),
+        );
+
+        // Execute pre-add plugin hooks (auto-tagger, url-validator, etc.)
+        match ctx.plugins.on_pre_add(&mut bookmark) {
+            HookResult::Continue => {}
+            HookResult::Skip => {
+                eprintln!("Bookmark addition skipped by plugin");
+                return Ok(());
+            }
+            HookResult::Error(e) => {
+                return Err(bukurs::error::BukursError::Plugin(e));
+            }
+        }
+
+        // Add to database (using potentially modified bookmark from plugins)
         let id_result = ctx.db.add_rec(
-            &self.url,
-            self.title.as_deref().unwrap_or(""),
-            &tags_str,
-            self.comment.as_deref().unwrap_or(""),
+            &bookmark.url,
+            &bookmark.title,
+            &bookmark.tags,
+            &bookmark.description,
             None, // parent_id
         );
 
         match id_result {
             Ok(id) => {
+                // Update bookmark with assigned ID for post-add hooks
+                bookmark.id = id;
+
+                // Execute post-add plugin hooks (statistics, webhook, etc.)
+                ctx.plugins.on_post_add(&bookmark);
+
                 eprintln!("Added bookmark at index {}", id);
                 Ok(())
             }
@@ -115,6 +153,7 @@ mod tests {
     use super::*;
     use bukurs::config::Config;
     use bukurs::db::BukuDb;
+    use bukurs::plugin::PluginManager;
     use rstest::rstest;
     use std::path::PathBuf;
 
@@ -122,6 +161,7 @@ mod tests {
         db: BukuDb,
         config: Config,
         db_path: PathBuf,
+        plugins: PluginManager,
     }
 
     impl TestEnv {
@@ -129,10 +169,12 @@ mod tests {
             let db = BukuDb::init_in_memory().expect("Failed to init in-memory DB");
             let config = Config::default();
             let db_path = PathBuf::from(":memory:");
+            let plugins = PluginManager::disabled(); // Disabled for tests
             Self {
                 db,
                 config,
                 db_path,
+                plugins,
             }
         }
 
@@ -141,6 +183,7 @@ mod tests {
                 db: &self.db,
                 config: &self.config,
                 db_path: &self.db_path,
+                plugins: &self.plugins,
             }
         }
     }

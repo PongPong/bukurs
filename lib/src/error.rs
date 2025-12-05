@@ -48,6 +48,10 @@ pub enum BukursError {
     #[error("Fuzzy search error: {0}")]
     FuzzySearch(String),
 
+    /// Plugin errors
+    #[error("Plugin error: {0}")]
+    Plugin(String),
+
     /// YAML parsing/serialization errors
     #[error("YAML error: {0}")]
     Yaml(String),

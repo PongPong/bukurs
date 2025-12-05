@@ -1,12 +1,14 @@
 use bukurs::config::Config;
 use bukurs::db::BukuDb;
 use bukurs::error::Result;
+use bukurs::plugin::PluginManager;
 use std::path::Path;
 
 pub struct AppContext<'a> {
     pub db: &'a BukuDb,
     pub config: &'a Config,
     pub db_path: &'a Path,
+    pub plugins: &'a PluginManager,
 }
 
 pub mod add;

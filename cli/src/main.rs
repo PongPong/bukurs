@@ -5,8 +5,10 @@ mod fetch_ui;
 mod format;
 mod interactive;
 mod output;
+mod plugins;
 mod tag_ops;
 
+use bukurs::plugin::PluginManager;
 use bukurs::{config, db, error::Result, utils};
 use clap::Parser;
 
@@ -40,7 +42,23 @@ fn main() -> Result<()> {
         config::Config::load()
     };
 
-    cli::handle_args(args, &db, &db_path, &cfg)?;
+    // Initialize plugin system
+    let plugins = if args.no_plugins {
+        PluginManager::disabled()
+    } else {
+        let plugin_data_dir = utils::get_default_dbdir().join("plugins");
+        std::fs::create_dir_all(&plugin_data_dir)?;
+        let mut manager = PluginManager::new(db_path.clone(), plugin_data_dir);
+
+        // Register built-in plugins
+        if let Err(e) = plugins::register_all_plugins(&mut manager) {
+            log::warn!("Failed to register some plugins: {}", e);
+        }
+
+        manager
+    };
+
+    cli::handle_args(args, &db, &db_path, &cfg, &plugins)?;
 
     Ok(())
 }

@@ -9,6 +9,7 @@ pub mod fuzzy;
 pub mod import_export;
 pub mod models;
 pub mod operations;
+pub mod plugin;
 pub mod tags;
 pub mod utils;
 
