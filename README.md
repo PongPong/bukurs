@@ -321,6 +321,158 @@ You can specify a custom location with `--db`:
 bukurs --db /path/to/custom.db print
 ```
 
+## Plugins
+
+bukurs includes a powerful plugin system that extends functionality automatically. Plugins run in the background - you just use bukurs normally and they enhance your workflow.
+
+### What Plugins Do
+
+| When you... | What plugins add |
+|-------------|------------------|
+| `bukurs add https://github.com/foo/bar` | Auto-adds `github,code` tags, fetches title, adds `unread` tag, checks for duplicates |
+| `bukurs add https://docs.rs/serde` | Auto-adds `rust,docs` tags |
+| `bukurs open 1` | Warns if link is dead (404), marks as read |
+| `bukurs add --tag private https://secret.com` | Hides from searches unless unlocked |
+
+### Built-in Plugins
+
+| Plugin | Default | Description |
+|--------|---------|-------------|
+| **auto_tagger** | ✅ On | Auto-tags based on URL domain (github, youtube, stackoverflow, etc.) |
+| **title_fetcher** | ✅ On | Fetches page title if not provided |
+| **tag_suggester** | ✅ On | Suggests tags from title/URL keywords (rust, python, tutorial, docs) |
+| **reading_list** | ✅ On | Adds `unread` tag to new bookmarks, tracks read status |
+| **duplicate_checker** | ✅ On | Warns about similar URLs |
+| **url_validator** | ✅ On | Validates URLs before adding |
+| **dead_link_checker** | ✅ On | Warns on `open` if URL returns 404 |
+| **statistics** | ✅ On | Tracks bookmark statistics |
+| **backup** | ✅ On | Auto-exports to JSON every 10 changes |
+| **csv_format** | ✅ On | CSV output format support |
+| **private_bookmarks** | ✅ On | Password-protects bookmarks tagged `private` |
+| **webhook** | Off | Sends HTTP notifications (needs config) |
+| **archive** | Off | Saves to archive.org on add |
+| **expiry** | Off | Auto-tags bookmarks as `expired` after N days |
+| **rss_feed** | Off | Generates RSS/Atom feed of bookmarks |
+
+### Disabling Plugins
+
+```bash
+# Run without any plugins
+bukurs --no-plugins add https://example.com
+```
+
+### Creating a Plugin
+
+Plugins are single Rust files in `cli/src/plugins/`. They're automatically discovered at build time.
+
+#### 1. Create the plugin file
+
+Create `cli/src/plugins/my_plugin.rs`:
+
+```rust
+use bukurs::models::bookmark::Bookmark;
+use bukurs::plugin::{Plugin, PluginInfo, HookResult, PluginContext};
+
+pub struct MyPlugin {
+    enabled: bool,
+}
+
+impl MyPlugin {
+    pub fn new() -> Self {
+        Self { enabled: true }
+    }
+}
+
+impl Plugin for MyPlugin {
+    fn info(&self) -> PluginInfo {
+        PluginInfo {
+            name: "my-plugin".to_string(),
+            version: "1.0.0".to_string(),
+            description: "Does something cool".to_string(),
+            author: "your-name".to_string(),
+        }
+    }
+
+    // Called when plugin loads - read config here
+    fn on_load(&mut self, ctx: &PluginContext) -> HookResult {
+        if let Some(enabled) = ctx.config.get("enabled") {
+            self.enabled = enabled != "false";
+        }
+        HookResult::Continue
+    }
+
+    // Called before a bookmark is added - can modify the bookmark
+    fn on_pre_add(&self, _ctx: &PluginContext, bookmark: &mut Bookmark) -> HookResult {
+        if !self.enabled {
+            return HookResult::Continue;
+        }
+
+        // Example: Add a custom tag
+        if bookmark.url.contains("example.com") {
+            bookmark.tags = format!("{},example", bookmark.tags.trim_matches(','));
+        }
+
+        HookResult::Continue
+    }
+
+    // Called after a bookmark is added
+    fn on_post_add(&self, _ctx: &PluginContext, bookmark: &Bookmark) -> HookResult {
+        log::info!("Bookmark added: {}", bookmark.title);
+        HookResult::Continue
+    }
+}
+
+// Required for auto-discovery
+pub fn create_plugin() -> Box<dyn Plugin> {
+    Box::new(MyPlugin::new())
+}
+```
+
+#### 2. Build
+
+```bash
+cargo build --release
+```
+
+That's it! The plugin is automatically registered.
+
+#### Available Hooks
+
+| Hook | When it runs | Can modify |
+|------|--------------|------------|
+| `on_load` | Plugin initialization | Plugin config |
+| `on_unload` | Plugin shutdown | - |
+| `on_pre_add` | Before adding bookmark | Bookmark |
+| `on_post_add` | After adding bookmark | - |
+| `on_pre_update` | Before updating | New bookmark |
+| `on_post_update` | After updating | - |
+| `on_pre_delete` | Before deleting | - |
+| `on_post_delete` | After deleting | - |
+| `on_pre_search` | Before search | Search query |
+| `on_post_search` | After search | Results |
+| `on_pre_open` | Before opening URL | - |
+| `on_pre_import` | Before import | Bookmark list |
+| `on_post_import` | After import | - |
+| `on_pre_export` | Before export | Bookmark list |
+
+#### Hook Return Values
+
+```rust
+HookResult::Continue  // Continue with operation
+HookResult::Skip      // Skip this operation (pre-hooks only)
+HookResult::Error(msg) // Stop and return error
+```
+
+#### Plugin Context
+
+Plugins receive a `PluginContext` with:
+
+```rust
+ctx.db_path    // Path to database file
+ctx.data_dir   // Plugin's data directory for persistence
+ctx.config     // HashMap<String, String> of plugin config
+```
+
 ## License
 
 This project maintains compatibility with the original buku license.

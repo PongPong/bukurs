@@ -275,6 +275,7 @@ mod tests {
     use super::*;
     use bukurs::config::Config;
     use bukurs::db::BukuDb;
+    use bukurs::plugin::PluginManager;
     use rstest::rstest;
     use std::path::PathBuf;
 
@@ -282,6 +283,7 @@ mod tests {
         db: BukuDb,
         config: Config,
         db_path: PathBuf,
+        plugins: PluginManager,
     }
 
     impl TestEnv {
@@ -289,10 +291,12 @@ mod tests {
             let db = BukuDb::init_in_memory().expect("Failed to init in-memory DB");
             let config = Config::default();
             let db_path = PathBuf::from(":memory:");
+            let plugins = PluginManager::disabled();
             Self {
                 db,
                 config,
                 db_path,
+                plugins,
             }
         }
 
@@ -301,6 +305,7 @@ mod tests {
                 db: &self.db,
                 config: &self.config,
                 db_path: &self.db_path,
+                plugins: &self.plugins,
             }
         }
     }

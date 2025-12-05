@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 bukurs = { path = "../lib" }
 clap = { version = "4.5", features = ["derive"] }
+regex = "1.12"
 rpassword = "7.4"
 owo-colors = "4.2.3"
 rustyline = "17.0"
@@ -26,6 +27,14 @@ serde_yaml = "0.9.34"
 indicatif = "0.18"
 rayon = "1.11"
 console = "0.16"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
+ring = "0.17"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+qrcode = "0.14"
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5.4"
 
 [dev-dependencies]
 rstest = "0.26"

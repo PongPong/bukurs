@@ -52,6 +52,10 @@ pub struct Cli {
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
 
+    /// Disable all plugins
+    #[arg(long = "no-plugins")]
+    pub no_plugins: bool,
+
     /// Search keywords (when no subcommand is provided)
     #[arg(name = "KEYWORD")]
     pub keywords: Vec<String>,
@@ -265,11 +269,13 @@ pub fn handle_args(
     db: &BukuDb,
     db_path: &std::path::Path,
     config: &bukurs::config::Config,
+    plugins: &bukurs::plugin::PluginManager,
 ) -> Result<()> {
     let ctx = AppContext {
         db,
         config,
         db_path,
+        plugins,
     };
 
     let command = match cli.command {

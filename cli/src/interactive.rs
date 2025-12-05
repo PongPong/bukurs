@@ -1,6 +1,7 @@
 use bukurs::db::BukuDb;
 use bukurs::error::Result;
 use bukurs::config::Config;
+use bukurs::plugin::PluginManager;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use crate::commands::{AppContext, BukuCommand};
@@ -62,10 +63,12 @@ pub fn run_with_context(ctx: &AppContext) -> Result<()> {
 pub fn run(db: &BukuDb) -> Result<()> {
     let config = Config::default();
     let db_path = std::path::PathBuf::from("bookmarks.db");
+    let plugins = PluginManager::disabled();
     let ctx = AppContext {
         db,
         config: &config,
         db_path: &db_path,
+        plugins: &plugins,
     };
     run_with_context(&ctx)
 }
